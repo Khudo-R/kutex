@@ -1,21 +1,29 @@
 {
   "name": "frontend",
-  "private": true,
-  "version": "0.0.0",
   "type": "module",
+  "version": "0.0.0",
+  "private": true,
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix"
   },
   "dependencies": {
-    "vue": "^3.5.0"
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "vue": "^3.5.0",
+    "vue-router": "^5.4.0"
   },
   "devDependencies": {
+    "@antfu/eslint-config": "^9.5.1",
+    "@babel/types": "^7.26.0",
     "@vitejs/plugin-vue": "^6.0.0",
+    "eslint": "^10.12.0",
     "typescript": "^5.6.3",
     "vite": "^7.0.0",
-    "vue-tsc": "^2.1.0",
-    "@babel/types": "^7.26.0"
+    "vue-tsc": "^2.1.0"
   }
 }
