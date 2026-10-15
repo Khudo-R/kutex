@@ -76,6 +76,7 @@ onMounted(() => {
     if (term.value !== t) {
       return // unmounted meanwhile
     }
+
     t.clearTextureAtlas()
     t.refresh(0, t.rows - 1)
   })
