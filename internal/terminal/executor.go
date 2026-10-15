@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"kutex/internal/logger"
 )
 
 // Executor manages background shell command execution and tracks working directory.
@@ -129,5 +131,6 @@ func (e *Executor) handleCd(cmd, cwd string) (string, error) {
 	}
 
 	e.SetCwd(targetDir)
+	logger.Component("executor").Info("Changed working directory", "from", cwd, "to", targetDir)
 	return "", nil
 }

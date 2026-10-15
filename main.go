@@ -3,6 +3,8 @@ package main
 import (
 	"embed"
 
+	"kutex/internal/logger"
+	"kutex/internal/system"
 	"kutex/internal/terminal"
 
 	"github.com/wailsapp/wails/v2"
@@ -14,7 +16,11 @@ import (
 var assets embed.FS
 
 func main() {
+	log := logger.Component("main")
+	log.Info("Starting kutex...")
+
 	term := terminal.New()
+	sys := system.New()
 
 	err := wails.Run(&options.App{
 		Title:  "kutex",
@@ -24,14 +30,16 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
+		Logger:           logger.NewWailsAdapter(nil),
 		OnStartup:        term.Startup,
 		OnShutdown:       term.Shutdown,
 		Bind: []interface{}{
 			term,
+			sys,
 		},
 	})
 
 	if err != nil {
-		println("Error:", err.Error())
+		log.Error("Application error", "error", err)
 	}
 }

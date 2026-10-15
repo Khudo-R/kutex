@@ -46,6 +46,8 @@ flowchart LR
 |---|---|---|
 | Wails | Создаёт нативное окно с WebView, раздаёт фронтенд, обеспечивает связь JS ↔ Go | [main.go](main.go), [wails.json](wails.json) |
 | Go `Terminal` | Модульный пакет: интерактивная PTY-сессия, выполнение команд, CWD | [internal/terminal/](internal/terminal/) |
+| Go `System` | Системные и файловые операции (получение списка директорий, рекурсивный обход) | [internal/system/](internal/system/) |
+| Go `Logger` | Модульный структурированный логгер на базе `log/slog`: цветной вывод, теги компонентов, запись в файл, адаптер для Wails | [internal/logger/](internal/logger/) |
 | `App.vue` | Связывает xterm и Go: вызывает методы Go и подписывается на события | [frontend/src/App.vue](frontend/src/App.vue) |
 | `XTerminal.vue` | Обёртка над xterm.js: рендеринг, подгонка размера, WebGL, шрифты | [frontend/src/components/XTerminal.vue](frontend/src/components/XTerminal.vue) |
 | Nerd Font | Показывает иконки (Powerline, devicons) при любом шрифте | [frontend/src/fonts/nerd-font.ts](frontend/src/fonts/nerd-font.ts), [nerd-font.css](frontend/src/fonts/nerd-font.css) |
@@ -63,24 +65,28 @@ flowchart LR
 
 1. `//go:embed all:frontend/dist` встраивает собранный фронтенд (результат `vite build`)
    прямо в бинарник. Поэтому приложение поставляется одним исполняемым файлом.
-2. Создаётся `term := terminal.New()`.
-3. Вызывается `wails.Run(...)` с такими опциями:
+2. Инициализируется логгер `log := logger.Component("main")`.
+3. Создаются сервисы `term := terminal.New()` и `sys := system.New()`.
+4. Вызывается `wails.Run(...)` с такими опциями:
    - окно `1024×768` с заголовком `kutex`;
    - `AssetServer` раздаёт встроенные файлы в WebView;
    - `BackgroundColour` `rgb(27,38,54)` совпадает с фоном терминала (`#1b2636`),
      поэтому при запуске не мелькает белое окно;
+   - `Logger: logger.NewWailsAdapter(nil)` перенаправляет все внутренние логи Wails в структурированный логгер приложения;
    - `OnStartup: term.Startup` сохраняет Wails-контекст для отправки событий (`runtime.EventsEmit`);
    - `OnShutdown: term.Shutdown` убивает shell при закрытии окна;
-   - `Bind: []interface{}{term}` делает методы `Terminal` доступными из JS.
+   - `Bind: []interface{}{term, sys}` делает методы `Terminal` и `System` доступными из JS.
 
 ### Как работает `Bind`
 
 При `wails dev` или `wails build` Wails с помощью рефлексии находит экспортируемые
-методы структуры `Terminal` из пакета `terminal` и генерирует JS-обёртки:
+методы структур `Terminal` и `System` и генерирует JS-обёртки:
 
 - [frontend/wailsjs/go/terminal/Terminal.js](frontend/wailsjs/go/terminal/Terminal.js) и `.d.ts`:
   функции `Start(cols, rows)`, `Write(data)`, `Resize(cols, rows)`, `Stop()`,
   `ExecuteCommand(command)`, `RunCommand(command)`, `GetCwd()`.
+- [frontend/wailsjs/go/system/System.js](frontend/wailsjs/go/system/System.js) и `.d.ts`:
+  функции `GetFolders(dirPath)`, `GetFoldersRecursive(root)`.
   Каждая возвращает `Promise`.
 - [frontend/wailsjs/runtime/](frontend/wailsjs/runtime/runtime.d.ts) содержит runtime API
   (`EventsOn`, `EventsEmit` и др.).
@@ -240,7 +246,75 @@ type Executor struct {
 
 ---
 
-## 4. Фронтенд
+## 4. Бэкенд — пакет `internal/system`
+
+Пакет [internal/system/](internal/system/) предоставляет высокоуровневые методы работы с файловой системой и экспортируется в Wails (`System.js`):
+
+```text
+internal/system/
+├── system.go       # GetFolders, GetFoldersRecursive, разрешение symlink'ов
+└── system_test.go  # Unit-тесты сканирования папок и краевых случаев
+```
+
+### Основные функции:
+
+1. **`GetFolders(dirPath string) ([]string, error)`**:
+   - Сканирует директорию `dirPath` (если путь пустой, используется текущая папка `"."`).
+   - Использует `os.ReadDir(dirPath)`.
+   - Включает как стандартные подпапки (`entry.IsDir()`), так и **символические ссылки, указывающие на папки** (`entry.Type()&os.ModeSymlink != 0` с проверкой `os.Stat(target).IsDir()`).
+2. **`GetFoldersRecursive(root string) ([]string, error)`**:
+   - Выполняет быстрый рекурсивный обход дерева каталогов через `filepath.WalkDir`.
+   - Возвращает относительные пути ко всем вложенным поддиректориям.
+3. Логирование: все операции подробно логируются через `logger.Component("system")`.
+
+---
+
+## 5. Бэкенд — система логирования `internal/logger`
+
+В проект внедрена модульная система структурированного логирования.
+
+```text
+internal/logger/
+├── handler.go      # Кастомный slog.Handler: ANSI-цвета, теги компонентов, файл без спецсимволов
+├── logger.go       # Фасад Logger, уровни (DEBUG, INFO, WARN, ERROR), Config, With, Component
+├── wails.go        # WailsAdapter: трансляция логов движка Wails v2 в наш логгер
+└── logger_test.go  # Unit-тесты форматирования, фильтрации, уровней, файлов и адаптера
+```
+
+### Анализ существующих библиотек Go на GitHub
+
+Перед разработкой были исследованы популярные библиотеки логирования для Go:
+
+| Библиотека | Звёзды GitHub | Плюсы | Минусы / Причина выбора или отказа |
+|---|---|---|---|
+| **uber-go/zap** | ~22k | Максимальная производительность, строгая типизация | Тяжёлый API, создаёт избыточные внешние зависимости для десктопного приложения |
+| **rs/zerolog** | ~10k | Zero-allocation JSON | Сфокусирован на облачных JSON-логах; форматирование для терминала требует отдельного пакета `zerolog/log` |
+| **sirupsen/logrus** | ~24k | Классический логгер | Находится в режиме maintenance; уступает по скорости `slog` и `zap` |
+| **charmbracelet/log** | ~4k | Красивый терминальный UI | Тянет за собой крупное дерево зависимостей (`lipgloss`, `termenv`, `mousetrap`); неудобно раздваивать поток в файл и терминал |
+| **Стандартный `log/slog` (Go 1.21+)** | В ядре Go | **0 внешних зависимостей**, высокая скорость, официальный стандарт языка, расширяемый `slog.Handler` | **Идеальный выбор для проекта.** Позволяет реализовать кастомный обработчик с цветами для консоли, чистым текстом для файла и прямой связкой с Wails |
+
+### Архитектура и возможности логгера
+
+1. **Цветной терминальный вывод:**
+   - Поддерживает уровни `[DEBUG]` (cyan), `[INFO] ` (green), `[WARN] ` (yellow), `[ERROR]` (red).
+   - Выводит метку времени с миллисекундами (`15:04:05.000`).
+   - Учитывает стандарт `NO_COLOR` и тип терминала (`TERM=dumb`).
+2. **Тегирование компонентов:**
+   - Метод `logger.Component("terminal")` или `logger.Component("system")` автоматически прикрепляет тег:
+     ```text
+     00:34:22.415 [INFO]  (executor) Changed working directory from=/home/khudo to=/tmp/project
+     00:34:22.689 [WARN]  (terminal) Attempted RunCommand while terminal session is not running command=ls
+     ```
+3. **Двойная запись (консоль + файл):**
+   - В терминал выводятся ANSI-цвета.
+   - В файл (если задан `Config.FilePath`) пишется чистый текст без escape-последовательностей с полной датой (`2006-01-02 15:04:05.000`).
+4. **Интеграция с Wails v2:**
+   - Структура `WailsAdapter` реализует интерфейс `github.com/wailsapp/wails/v2/pkg/logger.Logger` (`Print`, `Trace`, `Debug`, `Info`, `Warning`, `Error`, `Fatal`).
+   - Все внутренние события Wails автоматически попадают в лог с тегом `(wails)`.
+
+---
+
+## 6. Фронтенд
 
 ### Сборка и запуск
 
@@ -339,7 +413,7 @@ type Executor struct {
 
 ---
 
-## 5. Полный цикл: от нажатия клавиши до символа на экране
+## 7. Полный цикл: от нажатия клавиши до символа на экране
 
 ```mermaid
 sequenceDiagram
@@ -388,21 +462,21 @@ sequenceDiagram
 
 ---
 
-## 6. Сборка и разработка
+## 8. Сборка и разработка
 
 | Команда | Что делает |
 |---|---|
 | `wails dev` / `wails dev -tags webkit2_41` | Запускает Vite dev-сервер (`pnpm run dev`) с hot reload, собирает Go и открывает окно. Также регенерирует `frontend/wailsjs/`. Отладка из браузера доступна на `http://localhost:34115` |
 | `wails build` / `wails build -tags webkit2_41` | `pnpm install` → `pnpm run build` → `frontend/dist` встраивается в Go-бинарник → `build/bin/kutex`. Флаг `-tags webkit2_41` нужен в современных дистрибутивах Linux (Fedora 42, Ubuntu 24+), где установлен пакет `webkit2gtk-4.1`, а не устаревший 4.0 |
 | `pnpm lint` / `pnpm lint:fix` | ESLint (из `frontend/`) |
-| `go test -v ./...` | Запуск тестов бэкенда ([internal/terminal/](internal/terminal/)) на выполнение `ls`, `pwd`, `cd`, `cd -`, `cd ~`, PTY сессию и обработку ошибок |
+| `go test -v ./...` | Запуск тестов бэкенда ([internal/terminal/](internal/terminal/), [internal/system/](internal/system/), [internal/logger/](internal/logger/)) |
 
 Папка [build/](build/README.md) — ресурсы Wails для упаковки: иконка приложения,
 `Info.plist` для macOS, манифест, `icon.ico` и NSIS-инсталлятор для Windows.
 
 ---
 
-## 7. Замечания и потенциальные проблемы
+## 9. Замечания и потенциальные проблемы
 
 Найдено при анализе текущего состояния репозитория:
 
