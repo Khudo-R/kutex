@@ -43,6 +43,10 @@ export function loadNerdFont(): Promise<void> {
   return loading
 }
 
+function unquote(family: string): string {
+  return family.replace(/^["']|["']$/g, '')
+}
+
 /**
  * Adds the Nerd Font symbols as a fallback to a CSS font-family list.
  *
@@ -60,8 +64,4 @@ export function withNerdFont(fontFamily: string): string {
   const insertAt = genericIndex === -1 ? families.length : genericIndex
   families.splice(insertAt, 0, `"${NERD_FONT_FAMILY}"`)
   return families.join(', ')
-}
-
-function unquote(family: string): string {
-  return family.replace(/^["']|["']$/g, '')
 }

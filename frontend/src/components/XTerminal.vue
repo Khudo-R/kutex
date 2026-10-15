@@ -2,6 +2,7 @@
 import type { ITerminalOptions } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import { onBeforeUnmount, onMounted, shallowRef, useTemplateRef } from 'vue'
 import { loadNerdFont, withNerdFont } from '@/fonts/nerd-font'
@@ -12,9 +13,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  /** Raw user input (keystrokes, paste) — forward this to your PTY/backend. */
   data: [data: string]
-  /** Fired whenever the terminal grid size changes — forward to PTY resize. */
   resize: [size: { cols: number, rows: number }]
   ready: [term: Terminal]
 }>()
@@ -30,16 +29,33 @@ const fitAddon = new FitAddon()
 let resizeObserver: ResizeObserver | undefined
 
 function fit() {
-  // fit() throws if the element is hidden / has no size yet
   try {
     fitAddon.fit()
   }
   catch {}
 }
 
+/**
+ * Switches to the WebGL renderer. Unlike the default DOM renderer, it draws
+ * Powerline separators and box-drawing characters itself (`customGlyphs`), so
+ * they always fill the whole cell whatever the font size or window size.
+ * Falls back to the DOM renderer if WebGL is unavailable or its context is lost.
+ */
+function loadWebgl(t: Terminal) {
+  try {
+    const webgl = new WebglAddon()
+    webgl.onContextLoss(() => webgl.dispose())
+    t.loadAddon(webgl)
+  }
+  catch (err) {
+    console.warn('WebGL renderer unavailable, using DOM renderer:', err)
+  }
+}
+
 onMounted(() => {
   const options: ITerminalOptions = {
     cursorBlink: true,
+    customGlyphs: true,
     fontFamily: DEFAULT_FONT_FAMILY,
     fontSize: 14,
     theme: { background: '#1b2636' },
@@ -52,6 +68,7 @@ onMounted(() => {
   t.loadAddon(fitAddon)
   t.loadAddon(new WebLinksAddon())
   t.open(container.value!)
+  loadWebgl(t)
   fit()
 
   // Icons printed before the font finished loading were drawn as boxes: redraw them.

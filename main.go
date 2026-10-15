@@ -1,8 +1,9 @@
 package main
 
 import (
-	"context"
 	"embed"
+
+	"kutex/internal/terminal"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -13,11 +14,8 @@ import (
 var assets embed.FS
 
 func main() {
-	// Create an instance of the app structure
-	app := NewApp()
-	terminal := NewTerminal()
+	term := terminal.New()
 
-	// Create application with options
 	err := wails.Run(&options.App{
 		Title:  "kutex",
 		Width:  1024,
@@ -26,14 +24,10 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup: func(ctx context.Context) {
-			app.startup(ctx)
-			terminal.startup(ctx)
-		},
-		OnShutdown: terminal.shutdown,
+		OnStartup:        term.Startup,
+		OnShutdown:       term.Shutdown,
 		Bind: []interface{}{
-			app,
-			terminal,
+			term,
 		},
 	})
 

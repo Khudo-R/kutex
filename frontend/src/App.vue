@@ -1,9 +1,18 @@
 <script lang="ts" setup>
 import type { Terminal } from '@xterm/xterm'
 import { onBeforeUnmount, useTemplateRef } from 'vue'
-import { Resize, Start, Write } from '../wailsjs/go/main/Terminal'
+import { ExecuteCommand, GetCwd, Resize, RunCommand, Start, Write } from '../wailsjs/go/terminal/Terminal'
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import XTerminal from './components/XTerminal.vue'
+
+// Expose programmatic command methods on window.kutex
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { kutex?: Record<string, unknown> }).kutex = {
+    executeCommand: ExecuteCommand,
+    runCommand: RunCommand,
+    getCwd: GetCwd,
+  }
+}
 
 // The real shell runs in Go (see terminal.go) inside a PTY. This component only
 // forwards keystrokes to it and renders whatever it prints. The shell itself
@@ -40,7 +49,7 @@ function onReady(term: Terminal) {
 
 function startShell(cols: number, rows: number) {
   exited = false
-  Start(cols, rows).catch((err) => {
+  Start(cols, rows).catch((err: unknown) => {
     exited = true
     terminal.value?.writeln(`\x1B[1;31mFailed to start shell: ${err}\x1B[0m`)
   })
@@ -48,7 +57,7 @@ function startShell(cols: number, rows: number) {
 
 function onData(data: string) {
   if (!exited) {
-    Write(data).catch(err => console.error('terminal write failed:', err))
+    Write(data).catch((err: unknown) => console.error('terminal write failed:', err))
     return
   }
   if (data === ENTER) {
@@ -59,7 +68,7 @@ function onData(data: string) {
 }
 
 function onResize({ cols, rows }: { cols: number, rows: number }) {
-  Resize(cols, rows).catch(err => console.error('terminal resize failed:', err))
+  Resize(cols, rows).catch((err: unknown) => console.error('terminal resize failed:', err))
 }
 
 /** Go sends raw PTY bytes as base64; xterm decodes UTF-8 itself, even across chunks. */
