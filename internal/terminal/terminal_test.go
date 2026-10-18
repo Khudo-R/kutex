@@ -33,3 +33,27 @@ func TestTerminalService(t *testing.T) {
 		t.Fatalf("expected errNotRunning, got %v", err)
 	}
 }
+
+func TestTerminalHistory(t *testing.T) {
+	term := New()
+
+	term.AddHistory("ls")
+	term.AddHistory("  ")
+	term.AddHistory("git status")
+
+	got := term.GetHistory()
+	if len(got) != 2 || got[0] != "git status" || got[1] != "ls" {
+		t.Fatalf("expected [git status ls], got %q", got)
+	}
+
+	// A RunCommand that fails must not be recorded.
+	_ = term.RunCommand("make")
+	if got := term.GetHistory(); len(got) != 2 {
+		t.Fatalf("failed RunCommand must not be recorded, got %q", got)
+	}
+
+	term.ClearHistory()
+	if got := term.GetHistory(); len(got) != 0 {
+		t.Fatalf("expected empty history after ClearHistory, got %q", got)
+	}
+}

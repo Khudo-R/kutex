@@ -15,6 +15,7 @@ type Terminal struct {
 	ctx      context.Context
 	session  *Session
 	executor *Executor
+	history  *History
 	log      *logger.Logger
 }
 
@@ -23,6 +24,7 @@ func New() *Terminal {
 	return &Terminal{
 		session:  NewSession(),
 		executor: NewExecutor(),
+		history:  NewHistory(DefaultHistorySize),
 		log:      logger.Component("terminal"),
 	}
 }
@@ -89,7 +91,30 @@ func (t *Terminal) RunCommand(command string) error {
 	}
 	t.log.Debug("Injecting command into interactive terminal", "command", command)
 	cmd := strings.TrimRight(command, "\r\n") + "\r"
-	return t.session.Write(cmd)
+	if err := t.session.Write(cmd); err != nil {
+		return err
+	}
+	t.history.Add(command)
+	return nil
+}
+
+// AddHistory records a command the user ran in the interactive terminal.
+// The frontend calls it when the user presses Enter on a command line.
+func (t *Terminal) AddHistory(command string) {
+	if t.history.Add(command) {
+		t.log.Debug("Recorded command in history", "command", command)
+	}
+}
+
+// GetHistory returns the recorded commands, most recent first.
+func (t *Terminal) GetHistory() []string {
+	return t.history.List()
+}
+
+// ClearHistory removes all recorded commands.
+func (t *Terminal) ClearHistory() {
+	t.log.Info("Clearing command history")
+	t.history.Clear()
 }
 
 // ExecuteCommand runs a shell command in the background and returns its combined output.
