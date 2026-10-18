@@ -147,7 +147,7 @@ const decodeBase64 = (b64: string): Uint8Array => Uint8Array.from(atob(b64), c =
 </script>
 
 <template>
-  <main id="app">
+  <main id="app" class="relative box-border h-screen p-2">
     <XTerminal ref="terminal" @ready="onReady" @data="onData" @resize="onResize" />
     <HistoryPanel
       v-if="historyOpen"
@@ -158,12 +158,3 @@ const decodeBase64 = (b64: string): Uint8Array => Uint8Array.from(atob(b64), c =
     />
   </main>
 </template>
-
-<style scoped>
-#app {
-  position: relative;
-  height: 100vh;
-  padding: 8px;
-  box-sizing: border-box;
-}
-</style>

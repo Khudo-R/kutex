@@ -108,14 +108,5 @@ defineExpose({
 </script>
 
 <template>
-  <div ref="container" class="xterminal" />
+  <div ref="container" class="h-full w-full overflow-hidden text-left" />
 </template>
-
-<style scoped>
-.xterminal {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  text-align: left;
-}
-</style>

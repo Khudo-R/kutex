@@ -60,12 +60,16 @@ function onKeydown(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="history-backdrop" @mousedown.self="emit('close')">
-    <div class="history-panel" role="dialog" aria-label="Command history">
+  <div class="absolute inset-0 z-10 flex items-start justify-center bg-black/35 pt-[10vh]" @mousedown.self="emit('close')">
+    <div
+      class="max-h-[60vh] w-[min(640px,90%)] flex flex-col overflow-hidden border border-[#3a4b63] rounded-lg border-solid bg-[#243246] text-left shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+      role="dialog"
+      aria-label="Command history"
+    >
       <input
         ref="filterInput"
         v-model="filter"
-        class="history-filter"
+        class="border-0 border-b border-[#3a4b63] border-b-solid bg-transparent px-3 py-2.5 text-inherit outline-none [font:inherit]"
         type="text"
         placeholder="Search command history…"
         spellcheck="false"
@@ -73,12 +77,12 @@ function onKeydown(e: KeyboardEvent) {
         @keydown.prevent="onKeydown"
       >
 
-      <ul v-if="filtered.length" ref="list" class="history-list" role="listbox">
+      <ul v-if="filtered.length" ref="list" class="m-0 flex-1 list-none overflow-y-auto px-0 py-1" role="listbox">
         <li
           v-for="(command, i) in filtered"
           :key="command"
-          class="history-item"
-          :class="{ selected: i === selected }"
+          class="cursor-pointer truncate px-3 py-1.5 font-mono text-[13px]"
+          :class="{ 'bg-[#34507a]': i === selected }"
           role="option"
           :aria-selected="i === selected"
           :title="command"
@@ -88,105 +92,21 @@ function onKeydown(e: KeyboardEvent) {
           {{ command }}
         </li>
       </ul>
-      <p v-else class="history-empty">
+      <p v-else class="m-0 px-3 py-4 opacity-60">
         {{ commands.length ? 'No matching commands' : 'No commands yet' }}
       </p>
 
-      <footer class="history-footer">
+      <footer class="flex items-center justify-between border-t border-[#3a4b63] border-t-solid px-3 py-1.5 text-xs opacity-80">
         <span>↑↓ select · Enter run · Esc close</span>
-        <button type="button" class="history-clear" :disabled="!commands.length" @click="emit('clear')">
+        <button
+          type="button"
+          class="cursor-pointer border border-[#3a4b63] rounded border-solid bg-transparent px-2 py-0.5 text-inherit [font:inherit] disabled:cursor-default disabled:opacity-40"
+          :disabled="!commands.length"
+          @click="emit('clear')"
+        >
           Clear history
         </button>
       </footer>
     </div>
   </div>
 </template>
-
-<style scoped>
-.history-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding-top: 10vh;
-  background: rgba(0, 0, 0, 0.35);
-}
-
-.history-panel {
-  display: flex;
-  flex-direction: column;
-  width: min(640px, 90%);
-  max-height: 60vh;
-  background: #243246;
-  border: 1px solid #3a4b63;
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
-  text-align: left;
-}
-
-.history-filter {
-  padding: 10px 12px;
-  border: none;
-  border-bottom: 1px solid #3a4b63;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  outline: none;
-}
-
-.history-list {
-  flex: 1;
-  margin: 0;
-  padding: 4px 0;
-  overflow-y: auto;
-  list-style: none;
-}
-
-.history-item {
-  padding: 6px 12px;
-  font-family: Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-
-.history-item.selected {
-  background: #34507a;
-}
-
-.history-empty {
-  margin: 0;
-  padding: 16px 12px;
-  opacity: 0.6;
-}
-
-.history-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 12px;
-  border-top: 1px solid #3a4b63;
-  font-size: 12px;
-  opacity: 0.8;
-}
-
-.history-clear {
-  padding: 2px 8px;
-  border: 1px solid #3a4b63;
-  border-radius: 4px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.history-clear:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-</style>
