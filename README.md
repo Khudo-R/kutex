@@ -1,4 +1,12 @@
-# README
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="kutex_icon_pack/svg/kutex-app-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="kutex_icon_pack/svg/kutex-app-light.svg">
+    <img alt="Kutex Logo" src="kutex_icon_pack/svg/kutex-app-dark.svg" width="128" height="128">
+  </picture>
+</p>
+
+<h1 align="center">Kutex</h1>
 
 ## About
 
