@@ -5,7 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import { onBeforeUnmount, onMounted, shallowRef, useTemplateRef } from 'vue'
-import { loadNerdFont, withNerdFont } from '@/fonts/nerd-font'
+import { loadNerdFont, withNerdFont } from '@/shared/lib/nerd-font'
 import '@xterm/xterm/css/xterm.css'
 
 const props = defineProps<{
@@ -94,6 +94,7 @@ onMounted(() => {
   onBeforeUnmount(() => {
     resizeObserver?.disconnect()
     term.value?.dispose()
+    term.value = undefined
   })
 })
 

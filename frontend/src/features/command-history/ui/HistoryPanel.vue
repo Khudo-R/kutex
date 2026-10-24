@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, shallowRef, useTemplateRef, watch } from 'vue'
 
 const props = defineProps<{
   /** Recorded commands, most recent first. */
@@ -15,8 +15,8 @@ const emit = defineEmits<{
 const filterInput = useTemplateRef<HTMLInputElement>('filterInput')
 const list = useTemplateRef<HTMLUListElement>('list')
 
-const filter = ref('')
-const selected = ref(0)
+const filter = shallowRef('')
+const selected = shallowRef(0)
 
 const filtered = computed(() => {
   const needle = filter.value.trim().toLowerCase()
@@ -53,7 +53,8 @@ const keydownCommands: Record<string, () => void> = {
 
 function onKeydown(e: KeyboardEvent) {
   const command = keydownCommands[e.key]
-  if (!command) return
+  if (!command)
+    return
 
   command()
 }

@@ -372,8 +372,8 @@ Before implementing `internal/logger`, major Go logging libraries on GitHub were
 ### Logger Architecture & Features
 
 1. **Colorized Console Output (`ConsoleHandler` in `handler.go`):**
-   - Formats levels with fixed width and distinct ANSI colors: `[DEBUG]` (cyan `\033[36m`), `[INFO] ` (green `\033[32m`), `[WARN] ` (yellow `\033[33m`), `[ERROR]` (red `\033[31m`).
-   - Prints millisecond-precision timestamps (`15:04:05.000`) and dims auxiliary metadata (`\033[2m`).
+   - Formats levels with bold text (`\033[1m`), fixed width, and distinct ANSI colors for both the level tag and the log message text (`r.Message`): `[DEBUG]` (cyan `\033[36m`), `[INFO] ` (green `\033[32m`), `[WARN] ` (yellow `\033[33m`), `[ERROR]` (red `\033[31m`).
+   - Colors component tags `(component)` in magenta (`\033[35m`), prints millisecond-precision timestamps (`15:04:05.000`), and dims timestamps and attribute keys (`\033[2m`).
    - Automatically disables colors when the `NO_COLOR` environment variable is set or when `TERM=dumb` (`defaultUseColor()`).
 2. **First-Class Component Tagging:**
    - Calling `logger.Component("terminal")` or `logger.Component("executor")` attaches a `"component"` attribute that `ConsoleHandler` extracts and renders right after the log level as `(component)`:

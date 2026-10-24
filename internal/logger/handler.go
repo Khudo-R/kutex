@@ -11,12 +11,14 @@ import (
 
 // ANSI color codes for terminal formatting.
 const (
-	colorReset  = "\033[0m"
-	colorDim    = "\033[2m"
-	colorCyan   = "\033[36m"
-	colorGreen  = "\033[32m"
-	colorYellow = "\033[33m"
-	colorRed    = "\033[31m"
+	colorReset   = "\033[0m"
+	colorBold    = "\033[1m"
+	colorDim     = "\033[2m"
+	colorRed     = "\033[31m"
+	colorGreen   = "\033[32m"
+	colorYellow  = "\033[33m"
+	colorMagenta = "\033[35m"
+	colorCyan    = "\033[36m"
 )
 
 // ConsoleHandler is a custom slog.Handler that formats logs cleanly for terminal and file outputs.
@@ -82,13 +84,13 @@ func (h *ConsoleHandler) Handle(_ context.Context, r slog.Record) error {
 		if h.useColor {
 			compStr := ""
 			if component != "" {
-				compStr = fmt.Sprintf("%s(%s)%s ", colorDim, component, colorReset)
+				compStr = fmt.Sprintf("%s(%s)%s ", colorMagenta, component, colorReset)
 			}
-			consoleLine = fmt.Sprintf("%s%s%s %s%s%s %s%s",
+			consoleLine = fmt.Sprintf("%s%s%s %s%s%s%s %s%s%s%s",
 				colorDim, timeStr, colorReset,
-				levelColor, levelStr, colorReset,
+				colorBold, levelColor, levelStr, colorReset,
 				compStr,
-				r.Message,
+				levelColor, r.Message, colorReset,
 			)
 			for _, a := range attrs {
 				consoleLine += fmt.Sprintf(" %s%s=%s%v%s", colorDim, a.Key, colorReset, a.Value.Any(), colorDim)

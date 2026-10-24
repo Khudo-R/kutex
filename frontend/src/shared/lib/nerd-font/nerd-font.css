@@ -4,5 +4,5 @@
   font-style: normal;
   font-weight: 400;
   font-display: block;
-  src: url("../assets/fonts/SymbolsNerdFontMono-Regular.woff2") format("woff2");
+  src: url("@/shared/assets/fonts/SymbolsNerdFontMono-Regular.woff2") format("woff2");
 }

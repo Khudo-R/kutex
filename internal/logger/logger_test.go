@@ -89,22 +89,68 @@ func TestLogLevelFiltering(t *testing.T) {
 }
 
 func TestColorFormatting(t *testing.T) {
-	buf := &bytes.Buffer{}
-	handler := NewConsoleHandler(buf, nil, LevelInfo, true)
-	l := &Logger{
-		slog:    newSlogLogger(handler),
-		handler: handler,
+	tests := []struct {
+		name      string
+		logFn     func(l *Logger, msg string, args ...any)
+		message   string
+		wantLevel string
+		wantColor string
+	}{
+		{
+			name:      "debug colored cyan",
+			logFn:     (*Logger).Debug,
+			message:   "debug colored message",
+			wantLevel: "[DEBUG]",
+			wantColor: colorCyan,
+		},
+		{
+			name:      "info colored green",
+			logFn:     (*Logger).Info,
+			message:   "info colored message",
+			wantLevel: "[INFO] ",
+			wantColor: colorGreen,
+		},
+		{
+			name:      "warn colored yellow",
+			logFn:     (*Logger).Warn,
+			message:   "warn colored message",
+			wantLevel: "[WARN] ",
+			wantColor: colorYellow,
+		},
+		{
+			name:      "error colored red",
+			logFn:     (*Logger).Error,
+			message:   "error colored message",
+			wantLevel: "[ERROR]",
+			wantColor: colorRed,
+		},
 	}
 
-	l.Component("app").Info("colored output test", "status", "ok")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			handler := NewConsoleHandler(buf, nil, LevelDebug, true)
+			l := &Logger{
+				slog:    newSlogLogger(handler),
+				handler: handler,
+			}
 
-	out := buf.String()
-	// Should contain ANSI color codes
-	if !strings.Contains(out, "\033[") {
-		t.Errorf("expected ANSI color codes in colored output, got: %q", out)
-	}
-	if !strings.Contains(out, "colored output test") {
-		t.Errorf("expected message in output, got: %q", out)
+			tt.logFn(l.Component("app"), tt.message, "status", "ok")
+
+			out := buf.String()
+			wantLevelColored := colorBold + tt.wantColor + tt.wantLevel + colorReset
+			if !strings.Contains(out, wantLevelColored) {
+				t.Errorf("expected colored level %q in output, got: %q", wantLevelColored, out)
+			}
+			wantCompColored := colorMagenta + "(app)" + colorReset
+			if !strings.Contains(out, wantCompColored) {
+				t.Errorf("expected colored component %q in output, got: %q", wantCompColored, out)
+			}
+			wantMsgColored := tt.wantColor + tt.message + colorReset
+			if !strings.Contains(out, wantMsgColored) {
+				t.Errorf("expected colored message %q in output, got: %q", wantMsgColored, out)
+			}
+		})
 	}
 }
 
