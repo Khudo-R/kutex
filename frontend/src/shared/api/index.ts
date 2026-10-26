@@ -1,7 +1,9 @@
+import { Events } from '@wailsio/runtime'
+
 export {
   GetFolders,
   GetFoldersRecursive,
-} from '../../../wailsjs/go/system/System'
+} from '../../../bindings/kutex/internal/system/system'
 
 export {
   AddHistory,
@@ -14,6 +16,8 @@ export {
   Start,
   Stop,
   Write,
-} from '../../../wailsjs/go/terminal/Terminal'
+} from '../../../bindings/kutex/internal/terminal/terminal'
 
-export { EventsOn } from '../../../wailsjs/runtime/runtime'
+export function EventsOn<T = any>(eventName: string, callback: (data: T) => void): () => void {
+  return Events.On(eventName, (event: { data: T }) => callback(event.data))
+}

@@ -1,35 +1,21 @@
 # Build Directory
 
-The build directory is used to house all the build files and assets for your application. 
+The `build` directory houses the Wails v3 build configuration, Taskfiles, and platform-specific packaging assets:
 
-The structure is:
+* `config.yml` - Project metadata and `wails3 dev` configuration
+* `Taskfile.yml` - Common frontend, icon, and binding generation tasks
+* `linux/` - Linux Taskfile, `.desktop`, AppImage, and nfpm packaging assets
+* `darwin/` - macOS Taskfile, `Info.plist`, `Info.dev.plist`, and DMG/icon assets
+* `windows/` - Windows Taskfile, `icon.ico`, `info.json`, `wails.exe.manifest`, NSIS, and MSIX assets
 
-* bin - Output directory
-* darwin - macOS specific files
-* windows - Windows specific files
+## macOS (`darwin/`)
 
-## Mac
+- `Info.plist` - Main plist file used when packaging production macOS builds (`wails3 package`).
+- `Info.dev.plist` - Development plist file used when running `wails3 dev`.
 
-The `darwin` directory holds files specific to Mac builds.
-These may be customised and used as part of the build. To return these files to the default state, simply delete them
-and
-build with `wails build`.
+## Windows (`windows/`)
 
-The directory contains the following files:
-
-- `Info.plist` - the main plist file used for Mac builds. It is used when building using `wails build`.
-- `Info.dev.plist` - same as the main plist file but used when building using `wails dev`.
-
-## Windows
-
-The `windows` directory contains the manifest and rc files used when building with `wails build`.
-These may be customised for your application. To return these files to the default state, simply delete them and
-build with `wails build`.
-
-- `icon.ico` - The icon used for the application. This is used when building using `wails build`. If you wish to
-  use a different icon, simply replace this file with your own. If it is missing, a new `icon.ico` file
-  will be created using the `appicon.png` file in the build directory.
-- `installer/*` - The files used to create the Windows installer. These are used when building using `wails build`.
-- `info.json` - Application details used for Windows builds. The data here will be used by the Windows installer,
-  as well as the application itself (right click the exe -> properties -> details)
-- `wails.exe.manifest` - The main application manifest file.
+- `icon.ico` - Application icon embedded into the Windows `.syso` resource during `wails3 build`.
+- `nsis/*` - NSIS installer scripts used by `wails3 package`.
+- `info.json` - Application version/company metadata embedded into the executable properties.
+- `wails.exe.manifest` - Application manifest file.

@@ -2,7 +2,7 @@ import antfu from '@antfu/eslint-config'
 
 export default antfu({
   gitignore: true,
-  ignores: ['wailsjs/**'],
+  ignores: ['bindings/**'],
   vue: true,
   typescript: true,
   stylistic: {

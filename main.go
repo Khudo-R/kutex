@@ -7,12 +7,7 @@ import (
 	"kutex/internal/system"
 	"kutex/internal/terminal"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/linux"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 //go:embed all:frontend/dist
@@ -28,41 +23,42 @@ func main() {
 	term := terminal.New()
 	sys := system.New()
 
-	err := wails.Run(&options.App{
-		Title:  "kutex",
-		Width:  1024,
-		Height: 768,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
+	app := application.New(application.Options{
+		Name:        "kutex",
+		Description: "Desktop terminal emulator built with Go and Wails",
+		Icon:        appIcon,
+		Logger:      logger.NewWailsAdapter(nil),
+		Services: []application.Service{
+			application.NewService(term),
+			application.NewService(sys),
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		Logger:           logger.NewWailsAdapter(nil),
-		OnStartup:        term.Startup,
-		OnShutdown:       term.Shutdown,
-		Linux: &linux.Options{
-			Icon:             appIcon,
-			WebviewGpuPolicy: linux.WebviewGpuPolicyNever,
-			ProgramName:      "kutex",
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
 		},
-		Windows: &windows.Options{
-			WebviewIsTransparent: false,
-			WindowIsTranslucent:  false,
-			DisableWindowIcon:    false,
+		Linux: application.LinuxOptions{
+			ProgramName: "kutex",
 		},
-		Mac: &mac.Options{
-			About: &mac.AboutInfo{
-				Title:   "kutex",
-				Message: "Desktop terminal emulator built with Go and Wails",
-				Icon:    appIcon,
-			},
-		},
-		Bind: []interface{}{
-			term,
-			sys,
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
 	})
 
-	if err != nil {
+	app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "kutex",
+		Width:            1024,
+		Height:           768,
+		BackgroundColour: application.NewRGBA(27, 38, 54, 1),
+		URL:              "/",
+		Linux: application.LinuxWindow{
+			Icon:             appIcon,
+			WebviewGpuPolicy: application.WebviewGpuPolicyNever,
+		},
+		Windows: application.WindowsWindow{
+			DisableIcon: false,
+		},
+	})
+
+	if err := app.Run(); err != nil {
 		log.Error("Application error", "error", err)
 	}
 }

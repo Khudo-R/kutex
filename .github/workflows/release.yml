@@ -19,18 +19,12 @@ jobs:
         include:
           - name: linux-amd64
             os: ubuntu-24.04
-            platform: linux/amd64
-            tags: -tags webkit2_41
             artifact: kutex-linux-amd64.tar.gz
           - name: macos-universal
             os: macos-latest
-            platform: darwin/universal
-            tags: ''
             artifact: kutex-macos-universal.zip
           - name: windows-amd64
             os: windows-latest
-            platform: windows/amd64
-            tags: ''
             artifact: kutex-windows-amd64.zip
 
     steps:
@@ -41,7 +35,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -61,27 +55,31 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.0
+      - name: Install Wails3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
 
-      - name: Build Wails application
-        run: wails build -platform ${{ matrix.platform }} ${{ matrix.tags }} -clean
+      - name: Build Wails application (Linux / Windows)
+        if: runner.os != 'macOS'
+        run: wails3 build
+
+      - name: Build & package Wails universal app (macOS)
+        if: runner.os == 'macOS'
+        run: wails3 task darwin:package:universal
 
       - name: Package Linux artifact
         if: runner.os == 'Linux'
-        run: tar -czvf ${{ matrix.artifact }} -C build/bin kutex
+        run: tar -czvf ${{ matrix.artifact }} -C bin kutex
 
       - name: Package macOS artifact
         if: runner.os == 'macOS'
         run: |
-          cd build/bin
-          ditto -c -k --sequesterRsrc --keepParent kutex.app ../../${{ matrix.artifact }}
+          cd bin
+          ditto -c -k --sequesterRsrc --keepParent kutex.app ../${{ matrix.artifact }}
 
       - name: Package Windows artifact
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path build/bin/kutex.exe -DestinationPath ${{ matrix.artifact }}
-
+        run: Compress-Archive -Path bin/kutex.exe -DestinationPath ${{ matrix.artifact }}
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:

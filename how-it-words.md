@@ -1,6 +1,6 @@
 # How Kutex Works Under the Hood
 
-**kutex** is a desktop terminal emulator built on [Wails v2](https://wails.io):
+**kutex** is a desktop terminal emulator built on [Wails v3](https://v3.wails.io):
 the backend is written in **Go**, the user interface is built with **Vue 3 + TypeScript**, and terminal rendering is powered by **xterm.js**. Inside the application, the user's real system shell (`$SHELL`) runs inside a pseudo-terminal (PTY), so interactive applications (`vim`, `htop`, `less`), ANSI/truecolor escape sequences, `Ctrl+C`, shell completion, and command history all work natively. On top of the shell's native capabilities, Kutex provides its own programmatic command execution API and a built-in, shell-independent command history with a searchable popup panel.
 
 ---
@@ -52,7 +52,7 @@ Each layer has a clear, well-defined responsibility:
 
 | Layer | Responsibility | Files |
 |---|---|---|
-| **Wails** | Creates the native OS window with a system WebView, serves embedded frontend assets, and provides the two-way JS ↔ Go IPC bridge | [main.go](main.go), [wails.json](wails.json) |
+| **Wails v3** | Creates the native OS window with a system WebView, serves embedded frontend assets, and provides the two-way JS ↔ Go IPC bridge | [main.go](main.go), [Taskfile.yml](Taskfile.yml), [build/config.yml](build/config.yml) |
 | **Go `Terminal`** | Modular backend package: manages the interactive PTY session, background command execution, working directory tracking, and in-memory command history | [internal/terminal/](internal/terminal/) |
 | **Go `System`** | Filesystem and OS-level operations (directory listing, symlink resolution, recursive directory tree walking) | [internal/system/](internal/system/) |
 | **Go `Logger`** | Modular structured logger built on Go's standard `log/slog`: ANSI color output, component tags, plain-text file logging, and a Wails logger adapter | [internal/logger/](internal/logger/) |
@@ -80,39 +80,41 @@ Each layer has a clear, well-defined responsibility:
    Initializes a component-scoped structured logger via `log := logger.Component("main")`.
 3. **Service Instantiation:**
    Creates the backend services: `term := terminal.New()` and `sys := system.New()`.
-4. **Starting the Wails Runtime (`wails.Run`):**
-   Configures and launches the application window with `&options.App{...}`:
-   - `Title: "kutex"`, `Width: 1024`, `Height: 768` — initial window title and dimensions.
-   - `AssetServer: &assetserver.Options{Assets: assets}` — serves the embedded `frontend/dist` files to the system WebView.
-   - `BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1}` — matches the xterm.js background color (`#1b2636`), preventing a white flash while the WebView initializes.
-   - `Logger: logger.NewWailsAdapter(nil)` — routes all internal Wails runtime logs into Kutex's structured logger under the `(wails)` component tag.
-   - `OnStartup: term.Startup` — stores the Wails `context.Context` when the application starts so the backend can emit asynchronous events (`runtime.EventsEmit`) to the frontend.
-   - `OnShutdown: term.Shutdown` — cleanly terminates the child shell process and closes the PTY when the application window closes.
-   - `Bind: []interface{}{term, sys}` — exposes all exported methods of `Terminal` and `System` to the JavaScript frontend.
+4. **Creating the Wails v3 Application (`application.New`):**
+   Configures the application instance with `application.Options{...}`:
+   - `Name: "kutex"`, `Description: "Desktop terminal emulator built with Go and Wails"`, `Icon: appIcon` — application metadata and icon.
+   - `Logger: logger.NewWailsAdapter(nil)` — passes a `*slog.Logger` tagged with `component="wails"` so internal Wails v3 runtime logs flow through Kutex's structured logger.
+   - `Services: []application.Service{application.NewService(term), application.NewService(sys)}` — registers `Terminal` and `System` as Wails v3 services, automatically wiring `term.ServiceStartup` and `term.ServiceShutdown` to the application lifecycle.
+   - `Assets: application.AssetOptions{Handler: application.AssetFileServerFS(assets)}` — serves the embedded `frontend/dist` files to the system WebView.
+   - `Linux: application.LinuxOptions{ProgramName: "kutex"}` and `Mac: application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: true}`.
+5. **Creating the Main Window & Running (`app.Window.NewWithOptions` & `app.Run`):**
+   - `Title: "kutex"`, `Width: 1024`, `Height: 768`, `URL: "/"` — initial window title, dimensions, and entrypoint URL.
+   - `BackgroundColour: application.NewRGBA(27, 38, 54, 1)` — matches the xterm.js background color (`#1b2636`), preventing a white flash while the WebView initializes.
+   - `Linux: application.LinuxWindow{Icon: appIcon, WebviewGpuPolicy: application.WebviewGpuPolicyNever}` — sets the window icon and GPU policy on Linux.
+   - `app.Run()` — starts the native event loop and blocks until the application exits.
 
-### How Wails `Bind` Works
+### How Wails v3 Services & Bindings Work
 
-During `wails dev`, `wails build`, or `wails generate module`, Wails inspects the structs passed to `Bind` using Go reflection and automatically generates TypeScript/JavaScript bindings:
+During `wails3 dev`, `wails3 build`, or `wails3 generate bindings -ts`, the Wails v3 static analyzer inspects the services registered with `application.NewService(...)` and custom events registered with `application.RegisterEvent[T](...)` to generate strongly-typed TypeScript bindings in `frontend/bindings/`:
 
-- [frontend/wailsjs/go/terminal/Terminal.js](frontend/wailsjs/go/terminal/Terminal.js) and [Terminal.d.ts](frontend/wailsjs/go/terminal/Terminal.d.ts):
-  - `Start(cols: number, rows: number): Promise<void>`
-  - `Write(data: string): Promise<void>`
-  - `Resize(cols: number, rows: number): Promise<void>`
-  - `Stop(): Promise<void>`
-  - `ExecuteCommand(command: string): Promise<string>`
-  - `RunCommand(command: string): Promise<void>`
-  - `GetCwd(): Promise<string>`
-  - `AddHistory(command: string): Promise<void>`
-  - `GetHistory(): Promise<Array<string>>`
-  - `ClearHistory(): Promise<void>`
-- [frontend/wailsjs/go/system/System.js](frontend/wailsjs/go/system/System.js) and [System.d.ts](frontend/wailsjs/go/system/System.d.ts):
-  - `GetFolders(dirPath: string): Promise<Array<string>>`
-  - `GetFoldersRecursive(root: string): Promise<Array<string>>`
-- [frontend/wailsjs/runtime/](frontend/wailsjs/runtime/runtime.d.ts):
-  Contains the Wails runtime event bus and window management functions (`EventsOn`, `EventsEmit`, etc.).
+- [frontend/bindings/kutex/internal/terminal/terminal.ts](frontend/bindings/kutex/internal/terminal/terminal.ts):
+  - `Start(cols: number, rows: number): CancellablePromise<void>`
+  - `Write(data: string): CancellablePromise<void>`
+  - `Resize(cols: number, rows: number): CancellablePromise<void>`
+  - `Stop(): CancellablePromise<void>`
+  - `ExecuteCommand(command: string): CancellablePromise<string>`
+  - `RunCommand(command: string): CancellablePromise<void>`
+  - `GetCwd(): CancellablePromise<string>`
+  - `AddHistory(command: string): CancellablePromise<void>`
+  - `GetHistory(): CancellablePromise<string[]>`
+  - `ClearHistory(): CancellablePromise<void>`
+- [frontend/bindings/kutex/internal/system/system.ts](frontend/bindings/kutex/internal/system/system.ts):
+  - `GetFolders(dirPath: string): CancellablePromise<string[]>`
+  - `GetFoldersRecursive(root: string): CancellablePromise<string[]>`
+- [frontend/bindings/events/index.ts](frontend/bindings/events/index.ts) & `@wailsio/runtime`:
+  Provides the Wails v3 runtime IPC caller (`Call.ByID`) and typed event bus (`Events.On`, `Events.Emit`), re-exported through [frontend/src/shared/api/index.ts](frontend/src/shared/api/index.ts).
 
-When the frontend calls `Start(80, 24)` in JavaScript, Wails serializes the arguments to JSON, sends them across the WebView IPC bridge to Go, and invokes `(*Terminal).Start(80, 24)`. If the Go method returns a non-nil `error`, the returned JavaScript `Promise` rejects with that error message; otherwise, it resolves with the return value.
-
+When the frontend calls `Start(80, 24)` in TypeScript, `@wailsio/runtime` invokes the bound Go method by ID across the WebView IPC bridge (`(*Terminal).Start(80, 24)`). If the Go method returns a non-nil `error`, the returned `CancellablePromise` rejects with that error message; otherwise, it resolves with the return value.
 ---
 
 ## 3. Backend — `internal/terminal` Package
@@ -138,7 +140,7 @@ internal/terminal/
 
 | File | Responsibility |
 |---|---|
-| [terminal.go](internal/terminal/terminal.go) | Wails service facade: coordinates `Session`, `Executor`, and `History`; implements `Startup` and `Shutdown`; bridges PTY callbacks to `runtime.EventsEmit` |
+| [terminal.go](internal/terminal/terminal.go) | Wails v3 service facade: coordinates `Session`, `Executor`, and `History`; implements `ServiceStartup` and `ServiceShutdown`; bridges PTY callbacks to `app.Event.Emit` |
 | [session.go](internal/terminal/session.go) | Common session types, `errNotRunning`, and callback signatures (`OutputHandler`, `ExitHandler`) |
 | [session_unix.go](internal/terminal/session_unix.go) | Interactive PTY session for Unix: spawns `$SHELL` inside a pseudo-terminal (`creack/pty`), reads output in `pump()`, handles `Write`, `Resize`, and `Stop` |
 | [session_windows.go](internal/terminal/session_windows.go) | Interactive PTY session for Windows 10/11: launches PowerShell or `cmd.exe` in a native pseudo-console (`UserExistsError/conpty`), reads output in `pump()`, handles `Write`, `Resize`, and `Stop` |
@@ -146,7 +148,7 @@ internal/terminal/
 | [executor_unix.go](internal/terminal/executor_unix.go) | Spawns background commands via Unix `$SHELL -c` and inspects `/proc/<pid>/cwd` in real time |
 | [executor_windows.go](internal/terminal/executor_windows.go) | Dispatches background commands to `cmd.exe /c` or PowerShell `-Command`, handles Windows drive paths (`cd /d`) and root directories (`C:\`) |
 | [history.go](internal/terminal/history.go) | Thread-safe Most-Recently-Used (MRU) command history store holding up to 1,000 commands across shell restarts |
-| [events.go](internal/terminal/events.go) | Defines the Wails event constants `EventTerminalOutput` (`"terminal:output"`) and `EventTerminalExit` (`"terminal:exit"`) |
+| [events.go](internal/terminal/events.go) | Defines and registers the Wails v3 custom events `EventTerminalOutput` (`"terminal:output"`) and `EventTerminalExit` (`"terminal:exit"`) via `application.RegisterEvent` |
 | [terminal_test.go](internal/terminal/terminal_test.go) | Integration tests for the `Terminal` service |
 | [session_test.go](internal/terminal/session_test.go) | Unit tests for the PTY `Session` lifecycle |
 | [executor_test.go](internal/terminal/executor_test.go) | Unit tests for `Executor` and `cd` edge cases |
@@ -160,7 +162,6 @@ internal/terminal/
 
 ```go
 type Terminal struct {
-    ctx      context.Context
     session  *Session
     executor *Executor
     history  *History
@@ -169,12 +170,12 @@ type Terminal struct {
 ```
 
 - **`New() *Terminal`**: Constructs a `Terminal` with a new `Session`, `Executor`, `History` (sized to `DefaultHistorySize = 1000`), and a logger tagged with `"terminal"`.
-- **`Startup(ctx context.Context)`**: Called by Wails on app startup; stores `ctx` so `runtime.EventsEmit` can push events to the frontend.
-- **`Shutdown(_ context.Context)`**: Called by Wails on app shutdown; calls `t.Stop()` to ensure the shell process is terminated cleanly.
+- **`ServiceStartup(_ context.Context, _ application.ServiceOptions) error`**: Called by Wails v3 on application startup; logs service initialization.
+- **`ServiceShutdown() error`**: Called by Wails v3 on application shutdown; calls `t.Stop()` to ensure the shell process is terminated cleanly.
 - **`Start(cols, rows int) error`**:
   1. Queries the current working directory via `cwd := t.GetCwd()`.
-  2. Constructs the `onOutput` callback, which emits `EventTerminalOutput` (`"terminal:output"`) with the Base64-encoded PTY output chunk whenever `t.ctx != nil`.
-  3. Constructs the `onExit` callback, which logs the exit code and emits `EventTerminalExit` (`"terminal:exit"`).
+  2. Constructs the `onOutput` callback, which emits `EventTerminalOutput` (`"terminal:output"`) with the Base64-encoded PTY output chunk via `app.Event.Emit` whenever `application.Get() != nil`.
+  3. Constructs the `onExit` callback, which logs the exit code and emits `EventTerminalExit` (`"terminal:exit"`) via `app.Event.Emit`.
   4. Delegates to `t.session.Start(cols, rows, cwd, onOutput, onExit)`.
 - **`Write(data string) error`**: Forwards raw user input (keystrokes, control sequences, pasted text) to `t.session.Write(data)`.
 - **`Resize(cols, rows int) error`**: Logs the new dimensions at `DEBUG` level and forwards them to `t.session.Resize(cols, rows)`.
@@ -290,7 +291,7 @@ type History struct {
 
 ## 4. Backend — `internal/system` Package
 
-The [internal/system/](internal/system/) package provides high-level filesystem discovery methods and is bound to Wails (`System.js`):
+The [internal/system/](internal/system/) package provides high-level filesystem discovery methods and is registered as a Wails v3 service (`frontend/bindings/kutex/internal/system/system.ts`):
 
 ```text
 internal/system/
@@ -319,7 +320,7 @@ Kutex includes a custom structured logging package built around Go's standard `l
 internal/logger/
 ├── handler.go      # Custom slog.Handler: ANSI colors for console, component tags, clean text for files
 ├── logger.go       # Logger facade, levels (DEBUG, INFO, WARN, ERROR), Config, With, Component
-├── wails.go        # WailsAdapter: routes internal Wails v2 runtime logs into the structured logger
+├── wails.go        # NewWailsAdapter: returns a *slog.Logger tagged with component="wails" for Wails v3
 └── logger_test.go  # Unit tests for formatting, level filtering, component tags, file output, and adapter
 ```
 
@@ -351,9 +352,8 @@ Before implementing `internal/logger`, major Go logging libraries on GitHub were
 3. **Dual Output (Color Console + Clean File):**
    - While `h.out` (defaulting to `os.Stderr`) receives colorized output, `h.file` (opened in `O_CREATE|O_WRONLY|O_APPEND` mode when `Config.FilePath` is set) receives plain text completely stripped of ANSI escape sequences and prefixed with a full date-time stamp (`2006-01-02 15:04:05.000`).
    - All writes are synchronized with an internal `sync.Mutex` (`h.mu`) so concurrent goroutines never interleave log lines.
-4. **Wails v2 Integration (`WailsAdapter` in `wails.go`):**
-   - Implements `github.com/wailsapp/wails/v2/pkg/logger.Logger` (`Print`, `Trace`, `Debug`, `Info`, `Warning`, `Error`, `Fatal`) and tags every Wails internal message with `component="wails"`.
-
+4. **Wails v3 Integration (`NewWailsAdapter` in `wails.go`):**
+   - Returns a standard `*slog.Logger` tagged with `component="wails"` (`l.Component("wails").Slog()`), plugging directly into Wails v3's `application.Options.Logger`.
 ---
 
 ## 6. Frontend Architecture
@@ -362,9 +362,9 @@ Before implementing `internal/logger`, major Go logging libraries on GitHub were
 
 - [frontend/index.html](frontend/index.html): Mount point `<div id="app"></div>` and module script loading `src/main.ts`.
 - [frontend/src/main.ts](frontend/src/main.ts): Bootstraps Vue (`createApp(App).mount('#app')`) and imports global styles from [style.css](frontend/src/style.css).
-- [frontend/vite.config.ts](frontend/vite.config.ts): Configures `@vitejs/plugin-vue` and maps the `@` path alias to `src/`.
+- [frontend/vite.config.ts](frontend/vite.config.ts): Configures `@vitejs/plugin-vue` and maps `@` to `src/` and `api` to `bindings/`.
 - `pnpm run build`: Runs `vue-tsc --noEmit` (strict TypeScript type checking across `.ts` and `.vue` files) followed by `vite build`, outputting production assets to `frontend/dist` for Wails to embed.
-- Linting: Uses `@antfu/eslint-config` ([frontend/eslint.config.mjs](frontend/eslint.config.mjs)) enforcing 2-space indentation, single quotes, Stroustrup brace style, and no semicolons (`wailsjs/**` is ignored as auto-generated code).
+- Linting: Uses `@antfu/eslint-config` ([frontend/eslint.config.mjs](frontend/eslint.config.mjs)) enforcing 2-space indentation, single quotes, Stroustrup brace style, and no semicolons (`bindings/**` is ignored as auto-generated code).
 
 ---
 
@@ -588,21 +588,21 @@ Notice that during interactive typing, characters do not appear on screen immedi
 
 | Command | Description |
 |---|---|
-| `wails dev` / `wails dev -tags webkit2_41` | Starts the Vite dev server (`pnpm run dev`) with hot module replacement (HMR), compiles the Go backend, regenerates `frontend/wailsjs/`, and opens the native desktop window. Browser debugging is also available at `http://localhost:34115` |
-| `wails build` / `wails build -tags webkit2_41` | Runs `pnpm install` → `pnpm run build` → embeds `frontend/dist` into the compiled Go binary at `build/bin/kutex`. The `-tags webkit2_41` build flag is required on modern Linux distributions (e.g., Fedora 42, Ubuntu 24.04+, Arch Linux) that ship `webkit2gtk-4.1` instead of `4.0` |
-| `wails generate module` | Regenerates TypeScript/JavaScript bindings in `frontend/wailsjs/` from the bound Go structs without starting the UI |
+| `wails3 dev` | Starts the Vite dev server (`pnpm dev`) with hot module replacement (HMR), compiles the Go backend in dev mode, and opens the native desktop window using `./build/config.yml` |
+| `wails3 build` | Runs `go mod tidy`, generates icons and `.desktop` files, installs frontend dependencies (`pnpm install`), generates TypeScript bindings (`wails3 generate bindings -ts`), builds `frontend/dist`, and compiles the production binary into `bin/kutex` |
+| `wails3 generate bindings -ts` | Regenerates TypeScript bindings in `frontend/bindings/` from the registered Go services and custom events without starting the UI |
 | `pnpm lint` / `pnpm lint:fix` | Runs ESLint inside `frontend/` |
 | `pnpm build` | Runs `vue-tsc --noEmit && vite build` inside `frontend/` |
 | `go test -v ./...` | Runs all Go unit and integration tests ([internal/terminal/](internal/terminal/), [internal/system/](internal/system/), [internal/logger/](internal/logger/)) |
 
-The [build/](build/README.md) directory contains platform packaging assets for Wails: application icons, macOS `Info.plist`, and Windows manifest/icon/NSIS installer templates.
+The [build/](build/README.md) directory and root [Taskfile.yml](Taskfile.yml) contain Wails v3 build tasks and platform packaging assets: `build/config.yml`, application icons, Linux `.desktop`/AppImage/nfpm configs, macOS `Info.plist`, and Windows manifest/icon/NSIS/MSIX templates.
 
 ---
 
 ## 9. Design Notes, Limitations & Potential Improvements
 
-1. **Up-to-Date Wails Bindings (Resolved):** The template `app.go` and its generated `App.js` / `App.d.ts` bindings have been removed. `Terminal.js` and `Terminal.d.ts` expose the full set of terminal and history methods (`Start`, `Write`, `Resize`, `Stop`, `ExecuteCommand`, `RunCommand`, `GetCwd`, `AddHistory`, `GetHistory`, `ClearHistory`), and `System.js` exposes `GetFolders` and `GetFoldersRecursive`.
-2. **Direct Lifecycle Hook Wiring (Resolved):** In `main.go`, `options.App` passes `OnStartup: term.Startup` and `OnShutdown: term.Shutdown` directly without redundant wrapper closures.
+1. **Wails v3 Service Architecture & Typed Bindings (Resolved):** Kutex runs on Wails v3 (`github.com/wailsapp/wails/v3`). `Terminal` and `System` are registered as standalone services via `application.NewService(...)`, custom events are registered with `application.RegisterEvent`, and `wails3 generate bindings -ts` generates strongly-typed TypeScript modules under `frontend/bindings/`.
+2. **Service Lifecycle Hooks & Native `slog` Logger (Resolved):** `Terminal` implements `ServiceStartup` and `ServiceShutdown`, and `main.go` passes `logger.NewWailsAdapter(nil)` (`*slog.Logger`) directly to `application.Options.Logger`.
 3. **Command History Characteristics & Heuristics:**
    - **In-Memory Lifecycle:** `History` ([internal/terminal/history.go](internal/terminal/history.go)) stores up to 1,000 commands in Go memory (`DefaultHistorySize`). It survives shell exits/restarts and frontend reloads, and is cleared when the application closes. Persisting history across application restarts can be added directly inside `History` by loading/saving a file in `os.UserConfigDir()`.
    - **Screen-Buffer Capture Heuristics:** Because `CommandCapture` ([frontend/src/terminal/command-capture.ts](frontend/src/terminal/command-capture.ts)) reads the edited line off the xterm screen buffer on `Enter`, it accurately reflects Tab completions and `Up`/`Down` shell history edits. However, as a screen-scraping heuristic:

@@ -199,18 +199,15 @@ func TestWailsAdapter(t *testing.T) {
 	}
 
 	adapter := NewWailsAdapter(l)
-	adapter.Print("print log")
-	adapter.Trace("trace log")
 	adapter.Debug("debug log")
 	adapter.Info("info log")
-	adapter.Warning("warning log")
+	adapter.Warn("warning log")
 	adapter.Error("error log")
-	adapter.Fatal("fatal log")
 
 	out := buf.String()
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 7 {
-		t.Fatalf("expected 7 lines from Wails adapter, got %d: %q", len(lines), out)
+	if len(lines) != 4 {
+		t.Fatalf("expected 4 lines from Wails adapter, got %d: %q", len(lines), out)
 	}
 
 	for _, line := range lines {

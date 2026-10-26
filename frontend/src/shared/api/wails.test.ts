@@ -16,12 +16,12 @@ const mocks = vi.hoisted(() => ({
   EventsOn: vi.fn(),
 }))
 
-vi.mock('../../../wailsjs/go/system/System', () => ({
+vi.mock('../../../bindings/kutex/internal/system/system', () => ({
   GetFolders: mocks.GetFolders,
   GetFoldersRecursive: mocks.GetFoldersRecursive,
 }))
 
-vi.mock('../../../wailsjs/go/terminal/Terminal', () => ({
+vi.mock('../../../bindings/kutex/internal/terminal/terminal', () => ({
   AddHistory: mocks.AddHistory,
   ClearHistory: mocks.ClearHistory,
   ExecuteCommand: mocks.ExecuteCommand,
@@ -34,8 +34,10 @@ vi.mock('../../../wailsjs/go/terminal/Terminal', () => ({
   Write: mocks.Write,
 }))
 
-vi.mock('../../../wailsjs/runtime/runtime', () => ({
-  EventsOn: mocks.EventsOn,
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: mocks.EventsOn,
+  },
 }))
 
 describe('shared/api Wails bindings', () => {
@@ -54,6 +56,18 @@ describe('shared/api Wails bindings', () => {
     expect(api.Start).toBe(mocks.Start)
     expect(api.Stop).toBe(mocks.Stop)
     expect(api.Write).toBe(mocks.Write)
-    expect(api.EventsOn).toBe(mocks.EventsOn)
+
+    const off = vi.fn()
+    mocks.EventsOn.mockImplementationOnce((_name: string, cb: (ev: { data: string }) => void) => {
+      cb({ data: 'payload' })
+      return off
+    })
+
+    const listener = vi.fn()
+    const unsubscribe = api.EventsOn('terminal:output', listener)
+
+    expect(mocks.EventsOn).toHaveBeenCalledExactlyOnceWith('terminal:output', expect.any(Function))
+    expect(listener).toHaveBeenCalledExactlyOnceWith('payload')
+    expect(unsubscribe).toBe(off)
   })
 })

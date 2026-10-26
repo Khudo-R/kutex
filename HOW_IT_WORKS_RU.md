@@ -1,6 +1,6 @@
 # Полное руководство по архитектуре и коду проекта Kutex
 
-**Kutex** — это десктопный эмулятор терминала, построенный на фреймворке [Wails v2](https://wails.io).
+**Kutex** — это десктопный эмулятор терминала, построенный на фреймворке [Wails v3](https://v3.wails.io).
 Бэкенд приложения написан на **Go (Golang 1.25)**, а пользовательский интерфейс — на **Vue 3 + TypeScript + UnoCSS** с использованием движка терминала **xterm.js** (включая аппаратное ускорение через WebGL).
 
 Внутри приложения настоящая системная оболочка пользователя (`$SHELL` — например, `zsh` или `bash`) запускается внутри псевдотерминала (**PTY**). Благодаря этому полноценно работают интерактивные консольные программы (`vim`, `nvim`, `htop`, `less`, `tmux`), управляющие последовательности ANSI и 24-битный цвет (`truecolor`), сигналы прерывания (`Ctrl+C`), автодополнение по `Tab`, а также родная история команд оболочки. Поверх этого Kutex реализует собственный программный API для фонового выполнения команд и независимую от шелла встроенную систему истории команд с быстрым поиском по `Ctrl+Shift+H`.
@@ -11,7 +11,7 @@
 
 1. [Высокоуровневая архитектура и структура проекта](#1-высокоуровневая-архитектура-и-структура-проекта)
 2. [Подробный разбор Go-кода (Backend на Golang)](#2-подробный-разбор-go-кода-backend-на-golang)
-   - [2.1. Конфигурация модуля (`go.mod`, `wails.json`)](#21-конфигурация-модуля-gomod-wailsjson)
+   - [2.1. Конфигурация модуля (`go.mod`, `Taskfile.yml`, `build/config.yml`)](#21-конфигурация-модуля-gomod-taskfileyml-buildconfigyml)
    - [2.2. Точка входа приложения (`main.go`)](#22-точка-входа-приложения-maingo)
    - [2.3. Пакет `internal/terminal` — Ядро терминала](#23-пакет-internalterminal--ядро-терминала)
      - [`events.go` — Константы событий Wails](#eventsgo--константы-событий-wails)
@@ -26,11 +26,11 @@
    - [2.5. Пакет `internal/logger` — Структурированное логирование (`log/slog`)](#25-пакет-internallogger--структурированное-логирование-logslog)
      - [`logger.go` — Фасад логгера и управление конфигурацией](#loggergo--фасад-логгера-и-управление-конфигурацией)
      - [`handler.go` — Кастомный `slog.Handler` для консоли и файла](#handlergo--кастомный-sloghandler-для-консоли-и-файла)
-     - [`wails.go` — Адаптер логгера для Wails (`WailsAdapter`)](#wailsgo--адаптер-логгера-для-wails-wailsadapter)
+     - [`wails.go` — Адаптер логгера для Wails v3 (`NewWailsAdapter`)](#wailsgo--адаптер-логгера-для-wails-v3-newwailsadapter)
      - [`logger_test.go` — Модульные тесты `logger`](#logger_testgo--модульные-тесты-logger)
 3. [Подробный разбор Frontend-скриптов (Vue 3 + TypeScript)](#3-подробный-разбор-frontend-скриптов-vue-3--typescript)
    - [3.1. Конфигурация и точка входа фронтенда (`index.html`, `main.ts`, `style.css`, `uno.config.ts`, `vite.config.ts`)](#31-конфигурация-и-точка-входа-фронтенда)
-   - [3.2. Автосгенерированные привязки Wails (`frontend/wailsjs/`)](#32-автосгенерированные-привязки-wails-frontendwailsjs)
+   - [3.2. Автосгенерированные привязки Wails v3 (`frontend/bindings/`)](#32-автосгенерированные-привязки-wails-v3-frontendbindings)
    - [3.3. Утилита безопасных промисов (`frontend/src/shared/utils/index.ts`)](#33-утилита-безопасных-промисов-frontendsrcsharedutilsindexts)
    - [3.4. Поддержка иконок Nerd Font (`nerd-font.ts` и `nerd-font.css`)](#34-поддержка-иконок-nerd-font-nerd-fontts-и-nerd-fontcss)
    - [3.5. Захват введённых команд из экранного буфера (`command-capture.ts`)](#35-захват-введённых-команд-из-экранного-буфера-command-capturets)
@@ -89,13 +89,14 @@ flowchart LR
 
 ```text
 kutex/
-├── main.go                                 # Точка входа Go: встраивание статики, настройка окна Wails, привязка сервисов
-├── go.mod / go.sum                         # Описание Go-модуля и дерево зависимостей (Wails v2, creack/pty, UserExistsError/conpty)
-├── wails.json                              # Конфигурация сборщика Wails (команды pnpm, тег webkit2_41)
+├── main.go                                 # Точка входа Go: встраивание статики, инициализация Wails v3, окно и регистрация сервисов
+├── go.mod / go.sum                         # Описание Go-модуля и дерево зависимостей (Wails v3, creack/pty, UserExistsError/conpty)
+├── Taskfile.yml                            # Задачи сборки, разработки и упаковки Wails v3 (pnpm, dev, build, package)
+├── build/config.yml                        # Конфигурация проекта и режима живой разработки wails3 dev
 ├── internal/                               # Приватные пакеты Go-бэкенда
 │   ├── terminal/                           # Пакет управления терминалом
-│   │   ├── events.go                       # Константы имён событий ("terminal:output", "terminal:exit")
-│   │   ├── terminal.go                     # Фасад Terminal, экспортируемый во фронтенд через Wails Bind
+│   │   ├── events.go                       # Константы и регистрация событий Wails v3 ("terminal:output", "terminal:exit")
+│   │   ├── terminal.go                     # Фасад сервиса Terminal, регистрируемый через application.NewService
 │   │   ├── session.go                      # Общие типы и обработчики PTY-сессии (OutputHandler, ExitHandler)
 │   │   ├── session_unix.go                 # Интерактивная PTY-сессия Unix/Linux/macOS на базе creack/pty
 │   │   ├── session_windows.go              # Интерактивная PTY-сессия Windows 10/11 на базе ConPTY (UserExistsError/conpty)
@@ -113,15 +114,15 @@ kutex/
 │   └── logger/                             # Пакет структурированного логирования поверх log/slog
 │       ├── logger.go                       # Фасад Logger, уровни, глобальный инстанс, тегирование компонентов
 │       ├── handler.go                      # Кастомный slog.Handler: цветной ANSI-вывод в консоль и чистый текст в файл
-│       ├── wails.go                        # Адаптер WailsAdapter для перенаправления внутренних логов Wails
+│       ├── wails.go                        # Адаптер NewWailsAdapter (*slog.Logger с тегом "wails") для Wails v3
 │       └── logger_test.go                  # Тесты форматирования, фильтрации уровней, записи в файл и адаптера Wails
 └── frontend/                               # Фронтенд-приложение (Vue 3 + TypeScript + Vite + UnoCSS)
     ├── index.html                          # HTML-каркас приложения
-    ├── package.json                        # Зависимости и npm-скрипты фронтенда
-    ├── vite.config.ts                      # Конфигурация сборщика Vite (плагины Vue и UnoCSS, алиас @)
+    ├── package.json                        # Зависимости (@wailsio/runtime, xterm.js, Vue 3) и скрипты фронтенда
+    ├── vite.config.ts                      # Конфигурация сборщика Vite (плагины Vue и UnoCSS, алиасы @ и api)
     ├── uno.config.ts                       # Конфигурация атомарного CSS-фреймворка UnoCSS (шрифты sans и mono)
     ├── eslint.config.mjs                   # Правила линтера (@antfu/eslint-config)
-    ├── wailsjs/                            # Автоматически сгенерированные Wails JS/TS-обёртки для вызова Go-методов
+    ├── bindings/                           # Автоматически сгенерированные Wails v3 TS-привязки для сервисов и событий Go
     └── src/                                # Исходный код фронтенда
         ├── main.ts                         # Инициализация Vue-приложения и подключение стилей
         ├── style.css                       # Подключение локального шрифта Nunito
@@ -151,21 +152,20 @@ kutex/
 
 ---
 
-### 2.1. Конфигурация модуля (`go.mod`, `wails.json`)
+### 2.1. Конфигурация модуля (`go.mod`, `Taskfile.yml`, `build/config.yml`)
 
 #### Файл [`go.mod`](file:///home/vlad/projects/kutex/go.mod)
 Объявляет модуль `kutex` под версию **Go 1.25.0** и использует внешние зависимости:
 1. **`github.com/creack/pty v1.1.24`** — стандартная де-факто библиотека в экосистеме Go для работы с псевдотерминалами (UNIX PTY на Linux и macOS). Она берёт на себя низкоуровневые системные вызовы `ioctl` для открытия пары master/slave файловых дескрипторов, создания новой сессии процесса (`setsid`), назначения управляющего терминала (`TIOCSCTTY`) и изменения размеров окна (`TIOCSWINSZ`).
 2. **`github.com/UserExistsError/conpty v0.1.4`** — библиотека для работы с нативным Windows Pseudo Console (**ConPTY**) API на Windows 10 (версия 1809+) и Windows 11. Позволяет создавать и подключать псевдоконсоль Windows (`CreatePseudoConsole`), изменять её размер (`ResizePseudoConsole`) и запускать современные Windows-оболочки (PowerShell, `cmd.exe`) с полной поддержкой ANSI/VT escape-последовательностей.
-3. **`github.com/wailsapp/wails/v2 v2.17.0`** — фреймворк для создания кроссплатформенных десктопных приложений на Go и веб-технологиях (использует системный WebView вместо Chromium из Electron и предоставляет двусторонний IPC-мост между JS и Go).
+3. **`github.com/wailsapp/wails/v3 v3.0.0`** — фреймворк нового поколения для создания кроссплатформенных десктопных приложений на Go и веб-технологиях (использует системный WebView: WebKitGTK 6.0 / GTK4 на Linux, WebKit на macOS, WebView2 на Windows и предоставляет быстрый двусторонний IPC-мост между TypeScript и Go).
 
-#### Файл [`wails.json`](file:///home/vlad/projects/kutex/wails.json)
-Управляет процессом сборки и разработки Wails:
-- `"frontend:install": "pnpm install"` — установка пакетов через `pnpm`.
-- `"frontend:build": "pnpm run build"` — проверка типов `vue-tsc` и сборка бандла через `vite build`.
-- `"frontend:dev:watcher": "pnpm run dev"` — запуск Vite dev-сервера при вызове `wails dev`.
-- `"build:tags": "webkit2_41"` — автоматически передаёт тег компиляции Go `-tags webkit2_41`, который необходим на современных дистрибутивах Linux, использующих библиотеку `webkit2gtk-4.1` вместо устаревшей `4.0`.
-
+#### Файлы [`Taskfile.yml`](file:///home/vlad/projects/kutex/Taskfile.yml) и [`build/config.yml`](file:///home/vlad/projects/kutex/build/config.yml)
+Управляют процессом сборки, генерации привязок и разработки в Wails v3:
+- `PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "pnpm"}}'` — использование `pnpm` для установки пакетов и запуска скриптов во `frontend/`.
+- `wails3 generate bindings -ts` — статический анализ Go-сервисов и генерация строго типизированных TypeScript-привязок во `frontend/bindings/`.
+- `wails3 dev` — запуск режима живой разработки (Vite dev-сервер + автоматическая пересборка Go при изменениях).
+- `wails3 build` — полная продакшен-сборка приложения в бинарный файл `bin/kutex`.
 ---
 
 ### 2.2. Точка входа приложения ([`main.go`](file:///home/vlad/projects/kutex/main.go))
@@ -185,17 +185,21 @@ var assets embed.FS
    - `term := terminal.New()` — создаёт главный сервис управления терминалом.
    - `sys := system.New()` — создаёт сервис работы с файловой системой.
 
-3. **Конфигурация и запуск `wails.Run(&options.App{...})`:**
-   - `Title: "kutex"`, `Width: 1024`, `Height: 768` — заголовок и начальные размеры окна в пикселях.
-   - `AssetServer: &assetserver.Options{Assets: assets}` — указывает внутреннему виртуальному серверу Wails отдавать встроенные файлы из `embed.FS` в системный WebView.
-   - `BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1}` — задаёт цвет фона нативного окна (`#1b2636`), в точности совпадающий с фоном терминала `xterm.js`. Это предотвращает белую вспышку при холодном старте окна до загрузки CSS.
-   - `Logger: logger.NewWailsAdapter(nil)` — подключает наш кастомный адаптер логгера, чтобы все внутренние системные сообщения самого фреймворка Wails проходили через единый логгер приложения с тегом `(wails)`.
-   - `OnStartup: term.Startup` — хук жизненного цикла. Когда окно и рантайм Wails инициализированы, Wails вызывает `term.Startup(ctx)`, передавая туда `context.Context`. Этот контекст необходим Go-коду для отправки асинхронных событий во фронтенд.
-   - `OnShutdown: term.Shutdown` — хук закрытия приложения. При закрытии окна пользователем автоматически вызывается `term.Shutdown(ctx)`, который принудительно убивает дочерний процесс шелла и закрывает дескриптор PTY, чтобы в системе не оставалось «осиротевших» процессов.
-   - `Bind: []interface{}{term, sys}` — **ключевой механизм Wails**. При передаче указателей `term` (`*terminal.Terminal`) и `sys` (`*system.System`) в срез `Bind`, Wails с помощью рефлексии (`reflect`) анализирует все их экспортируемые (начинающиеся с заглавной буквы) методы и:
-     1. Во время сборки генерирует соответствующие TypeScript/JavaScript функции в `frontend/wailsjs/go/terminal/Terminal.js` и `frontend/wailsjs/go/system/System.js`.
-     2. Во время работы приложения автоматически десериализует аргументы из JSON при вызове из JS, вызывает Go-метод и возвращает результат (или ошибку `error`) обратно в JS в виде `Promise`.
+3. **Инициализация приложения `application.New(application.Options{...})`:**
+   В Wails v3 создание приложения, создание окон и запуск цикла событий разделены на явные фазы:
+   - `Name: "kutex"`, `Description: "Desktop terminal emulator built with Go and Wails"`, `Icon: appIcon` — метаданные и иконка приложения.
+   - `Logger: logger.NewWailsAdapter(nil)` — передаёт стандартный `*slog.Logger` с тегом `(wails)`, чтобы внутренние системные сообщения фреймворка Wails v3 проходили через единый логгер приложения.
+   - `Services: []application.Service{application.NewService(term), application.NewService(sys)}` — **сервисная архитектура Wails v3**. Регистрирует структуры `term` (`*terminal.Terminal`) и `sys` (`*system.System`) как сервисы приложения:
+     1. Жизненный цикл сервиса автоматически связывается с методами `ServiceStartup(ctx, options)` и `ServiceShutdown()`.
+     2. Генератор `wails3 generate bindings -ts` статически анализирует экспортируемые методы сервисов и создаёт TypeScript-модули `frontend/bindings/kutex/internal/terminal/terminal.ts` и `frontend/bindings/kutex/internal/system/system.ts`.
+   - `Assets: application.AssetOptions{Handler: application.AssetFileServerFS(assets)}` — указывает встроенному серверу ассетов Wails v3 отдавать файлы из `embed.FS` в системный WebView.
+   - `Linux: application.LinuxOptions{ProgramName: "kutex"}` и `Mac: application.MacOptions{ApplicationShouldTerminateAfterLastWindowClosed: true}`.
 
+4. **Создание главного окна `app.Window.NewWithOptions(application.WebviewWindowOptions{...})` и запуск `app.Run()`:**
+   - `Title: "kutex"`, `Width: 1024`, `Height: 768`, `URL: "/"` — заголовок, начальные размеры окна и стартовый маршрут.
+   - `BackgroundColour: application.NewRGBA(27, 38, 54, 1)` — задаёт цвет фона нативного окна (`#1b2636`), в точности совпадающий с фоном терминала `xterm.js`, предотвращая белую вспышку при старте.
+   - `Linux: application.LinuxWindow{Icon: appIcon, WebviewGpuPolicy: application.WebviewGpuPolicyNever}` — иконка окна и политика WebView GPU на Linux.
+   - `app.Run()` — запускает главный цикл событий ОС и блокируется до закрытия приложения.
 ---
 
 ### 2.3. Пакет `internal/terminal` — Ядро терминала
@@ -206,20 +210,21 @@ var assets embed.FS
 
 #### 1. [`internal/terminal/events.go`](file:///home/vlad/projects/kutex/internal/terminal/events.go) — Константы событий Wails
 
-В этом файле объявлены строковые константы имён событий, которые Go-бэкенд отправляет во фронтенд через шину событий Wails (`runtime.EventsEmit`):
+В этом файле объявлены строковые константы имён событий, которые Go-бэкенд отправляет во фронтенд через шину событий Wails v3 (`app.Event.Emit`), а функция `init()` регистрирует их типы данных через `application.RegisterEvent`:
 
-- **`EventTerminalOutput = "terminal:output"`** — событие, несущее порцию (чанк) сырых байтов вывода из PTY, закодированную в строку **Base64**.
-- **`EventTerminalExit = "terminal:exit"`** — событие, уведомляющее фронтенд о том, что процесс оболочки завершился, и передающее целочисленный код возврата (`exitCode`).
+- **`EventTerminalOutput = "terminal:output"`** (`string`) — событие, несущее порцию (чанк) сырых байтов вывода из PTY, закодированную в строку **Base64**.
+- **`EventTerminalExit = "terminal:exit"`** (`int`) — событие, уведомляющее фронтенд о том, что процесс оболочки завершился, и передающее целочисленный код возврата (`exitCode`).
+
+Благодаря вызову `application.RegisterEvent[string](EventTerminalOutput)` и `application.RegisterEvent[int](EventTerminalExit)` генератор `wails3 generate bindings -ts` автоматически создаёт типизированные декларации событий `CustomEvents` для `@wailsio/runtime`.
 
 ---
 
 #### 2. [`internal/terminal/terminal.go`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go) — Главный фасад сервиса `Terminal`
 
-Структура [`Terminal`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go#L14-L20) — это фасад, который связывает воедино три внутренних компонента (`Session`, `Executor`, `History`), логгер и рантайм Wails:
+Структура [`Terminal`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go#L14-L19) — это сервис Wails v3, который связывает воедино три внутренних компонента (`Session`, `Executor`, `History`) и логгер без жёсткой привязки к `context.Context`:
 
 ```go
 type Terminal struct {
-	ctx      context.Context // Контекст рантайма Wails (нужен для отправки событий EventsEmit)
 	session  *Session        // Управляет интерактивным процессом шелла и PTY
 	executor *Executor       // Выполняет одиночные фоновые команды и отслеживает текущую папку (CWD)
 	history  *History        // Хранит историю выполненных команд в памяти (MRU)
@@ -229,22 +234,21 @@ type Terminal struct {
 
 Разберём все методы [`Terminal`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go):
 
-- **[`New() *Terminal`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go#L23-L30):**
+- **[`New() *Terminal`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go#L22-L29):**
   Конструктор сервиса. Инициализирует `NewSession()`, `NewExecutor()`, `NewHistory(DefaultHistorySize)` (на 1000 команд) и логгер `logger.Component("terminal")`.
 
-- **[`Startup(ctx context.Context)`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go#L33-L36):**
-  Вызывается рантаймом Wails при старте приложения. Сохраняет `ctx` в поле `t.ctx` и пишет лог `Terminal service initialized`.
+- **[`ServiceStartup(_ context.Context, _ application.ServiceOptions) error`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go#L32-L35):**
+  Хук жизненного цикла сервиса Wails v3, вызываемый при старте приложения. Пишет лог `Terminal service initialized`.
 
-- **[`Shutdown(_ context.Context)`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go#L39-L42):**
-  Вызывается рантаймом Wails при закрытии окна. Логирует завершение и вызывает `t.Stop()`, гарантируя чистое закрытие PTY и процесса оболочки.
+- **[`ServiceShutdown() error`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go#L38-L42):**
+  Хук жизненного цикла сервиса Wails v3, вызываемый при завершении приложения. Логирует остановку и вызывает `t.Stop()`, гарантируя чистое закрытие PTY и процесса оболочки.
 
 - **[`Start(cols, rows int) error`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go#L45-L67):**
   Запускает интерактивную оболочку пользователя с заданным числом колонок (`cols`) и строк (`rows`).
   1. Определяет стартовую рабочую директорию вызовом `cwd := t.GetCwd()`.
-  2. Создаёт замыкание `onOutput := func(b64 string)`, которое при наличии `t.ctx != nil` отправляет событие `runtime.EventsEmit(t.ctx, EventTerminalOutput, b64)` во фронтенд.
-  3. Создаёт замыкание `onExit := func(code int)`, которое логирует код завершения процесса и отправляет событие `runtime.EventsEmit(t.ctx, EventTerminalExit, code)`.
+  2. Создаёт замыкание `onOutput := func(b64 string)`, которое при наличии активного экземпляра приложения (`if app := application.Get(); app != nil`) отправляет событие `app.Event.Emit(EventTerminalOutput, b64)` во фронтенд.
+  3. Создаёт замыкание `onExit := func(code int)`, которое логирует код завершения процесса и отправляет событие `app.Event.Emit(EventTerminalExit, code)`.
   4. Передаёт управление в `t.session.Start(cols, rows, cwd, onOutput, onExit)`. Благодаря такой передаче колбэков сам объект `Session` ничего не знает про Wails и легко тестируется в изоляции.
-
 - **[`Write(data string) error`](file:///home/vlad/projects/kutex/internal/terminal/terminal.go#L70-L72):**
   Принимает строку ввода от пользователя (нажатые клавиши, управляющие коды, вставленный текст) и напрямую передаёт её в `t.session.Write(data)` для записи в master-дескриптор PTY.
 
@@ -458,12 +462,12 @@ type History struct {
 
 ### 2.4. Пакет `internal/system` — Работа с файловой системой
 
-Пакет `internal/system` предоставляет методы для инспекции директорий ОС и также привязан к фронтенду через Wails (`Bind`).
+Пакет `internal/system` предоставляет методы для инспекции директорий ОС и зарегистрирован как сервис Wails v3 (`application.NewService(sys)`).
 
 #### 1. [`internal/system/system.go`](file:///home/vlad/projects/kutex/internal/system/system.go) — Сканирование директорий и симлинков
 
 - **Структура [`System`](file:///home/vlad/projects/kutex/internal/system/system.go#L12) и конструктор [`New()`](file:///home/vlad/projects/kutex/internal/system/system.go#L15-L17):**
-  Пустая структура-сервис `type System struct{}`, методы которой (`GetFolders` и `GetFoldersRecursive`) экспортируются в Wails и вызывают одноимённые функции пакета.
+  Пустая структура-сервис `type System struct{}`, методы которой (`GetFolders` и `GetFoldersRecursive`) экспортируются в Wails v3 и вызывают одноимённые функции пакета.
 
 - **[`GetFolders(dirPath string) ([]string, error)`](file:///home/vlad/projects/kutex/internal/system/system.go#L34-L63):**
   Возвращает список имён всех поддиректорий первого уровня внутри `dirPath`:
@@ -535,10 +539,10 @@ type History struct {
 
 ---
 
-#### 3. [`internal/logger/wails.go`](file:///home/vlad/projects/kutex/internal/logger/wails.go) — Адаптер логгера для Wails (`WailsAdapter`)
+#### 3. [`internal/logger/wails.go`](file:///home/vlad/projects/kutex/internal/logger/wails.go) — Адаптер логгера для Wails v3 (`NewWailsAdapter`)
 
-Фреймворк Wails v2 ожидает для своих внутренних логов интерфейс `github.com/wailsapp/wails/v2/pkg/logger.Logger` с методами `Print`, `Trace`, `Debug`, `Info`, `Warning`, `Error`, `Fatal`.
-Структура [`WailsAdapter`](file:///home/vlad/projects/kutex/internal/logger/wails.go#L11-L13) оборачивает наш `*Logger` с предзаданным тегом `.Component("wails")` и перенаправляет все внутренние вызовы Wails в соответствующие уровни нашего логгера (`Trace` и `Debug` → `Debug`, `Print` и `Info` → `Info`, `Warning` → `Warn`, `Error` и `Fatal` → `Error`).
+Фреймворк Wails v3 принимает для своих внутренних системных логов стандартный `*slog.Logger` в поле `application.Options.Logger`.
+Функция [`NewWailsAdapter(l *Logger) *slog.Logger`](file:///home/vlad/projects/kutex/internal/logger/wails.go#L8-L13) берёт наш `*Logger` (или `Default()`, если передан `nil`), создаёт дочерний логгер с тегом `.Component("wails")` и возвращает его базовый `*slog.Logger` через `.Slog()`.
 
 ---
 
@@ -550,7 +554,7 @@ type History struct {
 - `TestLogLevelFiltering`: отсечение `Debug` и `Info` сообщений, когда установлен порог `LevelWarn`.
 - `TestColorFormatting`: присутствие ANSI-последовательностей `\033[` при `UseColor: true`.
 - `TestFileLogging`: проверка того, что при одновременной цветной записи в консоль и в файл сам файл на диске содержит чистый текст **без** ANSI-кодов `\033[`.
-- `TestWailsAdapter`: проверка всех 7 методов интерфейса логгера Wails и наличия метки `(wails)` в каждой строке.
+- `TestWailsAdapter`: проверка логирования через `*slog.Logger`, возвращаемый `NewWailsAdapter`, и наличия метки `(wails)` в каждой строке.
 - `TestInitAndDefault`: проверка работы глобальных функций пакета (`Debug`, `Info`, `Warn`, `Error`).
 
 ---
@@ -572,22 +576,21 @@ type History struct {
 4. **[`frontend/uno.config.ts`](file:///home/vlad/projects/kutex/frontend/uno.config.ts):**
    Настраивает тему UnoCSS: определяет семейства шрифтов `font-sans` (с `Nunito` во главе) для UI-элементов (например, модального окна истории) и `font-mono` (`Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace`) для моноширинного текста.
 5. **[`frontend/vite.config.ts`](file:///home/vlad/projects/kutex/frontend/vite.config.ts):**
-   Подключает плагины `@vitejs/plugin-vue` и `unocss/vite`, а также настраивает путевой алиас `'@'` → `./src`.
+   Подключает плагины `@vitejs/plugin-vue` и `unocss/vite`, а также настраивает путевые алиасы `'@'` → `./src` и `'api'` → `./bindings`.
 6. **[`frontend/eslint.config.mjs`](file:///home/vlad/projects/kutex/frontend/eslint.config.mjs):**
-   Настраивает единый стиль кода через `@antfu/eslint-config` (отступы в 2 пробела, одинарные кавычки, без точек с запятой, игнорирование автосгенерированной папки `wailsjs/**`).
+   Настраивает единый стиль кода через `@antfu/eslint-config` (отступы в 2 пробела, одинарные кавычки, без точек с запятой, игнорирование автосгенерированной папки `bindings/**`).
 
 ---
 
-### 3.2. Автосгенерированные привязки Wails (`frontend/wailsjs/`)
+### 3.2. Автосгенерированные привязки Wails v3 (`frontend/bindings/`)
 
-Файлы в этой папке создаются автоматически утилитой `wails` на основе Go-структур, переданных в `Bind` в `main.go`:
-- **[`frontend/wailsjs/go/terminal/Terminal.js`](file:///home/vlad/projects/kutex/frontend/wailsjs/go/terminal/Terminal.js) (и `Terminal.d.ts`):**
-  Экспортирует функции-обёртки `Start`, `Write`, `Resize`, `Stop`, `RunCommand`, `ExecuteCommand`, `GetCwd`, `AddHistory`, `GetHistory`, `ClearHistory`. Каждая из них вызывает `window['go']['terminal']['Terminal'][MethodName](...)` и возвращает `Promise`.
-- **[`frontend/wailsjs/go/system/System.js`](file:///home/vlad/projects/kutex/frontend/wailsjs/go/system/System.js) (и `System.d.ts`):**
+Файлы в этой папке создаются автоматически командой `wails3 generate bindings -ts` на основе Go-сервисов, зарегистрированных через `application.NewService(...)`, и событий, зарегистрированных через `application.RegisterEvent(...)`:
+- **[`frontend/bindings/kutex/internal/terminal/terminal.ts`](file:///home/vlad/projects/kutex/frontend/bindings/kutex/internal/terminal/terminal.ts):**
+  Экспортирует типизированные функции `Start`, `Write`, `Resize`, `Stop`, `RunCommand`, `ExecuteCommand`, `GetCwd`, `AddHistory`, `GetHistory`, `ClearHistory`. Каждая из них вызывает `$Call.ByID(...)` из пакета `@wailsio/runtime` и возвращает `CancellablePromise`.
+- **[`frontend/bindings/kutex/internal/system/system.ts`](file:///home/vlad/projects/kutex/frontend/bindings/kutex/internal/system/system.ts):**
   Экспортирует функции `GetFolders(dirPath)` и `GetFoldersRecursive(root)`.
-- **[`frontend/wailsjs/runtime/runtime.js`](file:///home/vlad/projects/kutex/frontend/wailsjs/runtime/runtime.js):**
-  Предоставляет клиентский API рантайма Wails, включая подписку на события бэкенда `EventsOn(eventName, callback)`.
-
+- **`@wailsio/runtime` и [`frontend/src/shared/api/index.ts`](file:///home/vlad/projects/kutex/frontend/src/shared/api/index.ts):**
+  Пакет `@wailsio/runtime` предоставляет клиентский API рантайма Wails v3, включая шину событий `Events.On(eventName, callback)`, где `callback` получает объект события `WailsEvent` (`{ name, data, sender }`). Модуль `frontend/src/shared/api/index.ts` централизованно реэкспортирует методы сервисов и оборачивает `Events.On` в функцию `EventsOn`, распаковывающую `event.data`.
 ---
 
 ### 3.3. Утилита безопасных промисов ([`frontend/src/shared/utils/index.ts`](file:///home/vlad/projects/kutex/frontend/src/shared/utils/index.ts))
@@ -709,7 +712,7 @@ export async function safePromiseTyped<
 
 ### 3.8. Корневой компонент-оркестратор ([`frontend/src/App.vue`](file:///home/vlad/projects/kutex/frontend/src/App.vue))
 
-[`App.vue`](file:///home/vlad/projects/kutex/frontend/src/App.vue) связывает все части фронтенда с Go-методами из `wailsjs/go/terminal/Terminal`:
+[`App.vue`](file:///home/vlad/projects/kutex/frontend/src/App.vue) (и [`TerminalPage.vue`](file:///home/vlad/projects/kutex/frontend/src/pages/terminal/ui/TerminalPage.vue)) связывает все части фронтенда с Go-методами из `frontend/bindings/kutex/internal/terminal/terminal`:
 
 1. **Глобальный API `window.kutex` (строки 12–20):**
    Экспортирует в глобальный объект `window.kutex` методы `executeCommand`, `runCommand`, `getCwd`, `getHistory` и `clearHistory`, позволяя вызывать Go-бэкенд напрямую из консоли разработчика (`F12`) или внешних скриптов автоматизации.
@@ -817,9 +820,9 @@ sequenceDiagram
 
 | Команда | Описание |
 |---|---|
-| `wails dev` | Запускает режим живой разработки: поднимает Vite dev-сервер с мгновенным HMR, компилирует Go-код (с тегом `webkit2_41` из `wails.json`), обновляет привязки в `frontend/wailsjs/` и открывает нативное окно приложения |
-| `wails build` | Собирает оптимизированный продакшен-бандл фронтенда (`pnpm run build`), встраивает `frontend/dist` в Go и компилирует единый исполняемый файл в `build/bin/kutex` |
-| `wails generate module` | Перегенерирует JS/TS привязки в `frontend/wailsjs/` по экспортируемым методам Go-структур без запуска окна |
+| `wails3 dev` | Запускает режим живой разработки (по конфигурации `build/config.yml`): поднимает Vite dev-сервер с мгновенным HMR, компилирует Go-код в dev-режиме и открывает нативное окно приложения |
+| `wails3 build` | Запускает пайплайн `Taskfile.yml`: обновляет иконки и `.desktop`, устанавливает зависимости фронтенда (`pnpm install`), генерирует TS-привязки (`wails3 generate bindings -ts`), собирает `frontend/dist` и компилирует единый исполняемый файл в `bin/kutex` |
+| `wails3 generate bindings -ts` | Перегенерирует TypeScript-привязки в `frontend/bindings/` по зарегистрированным Go-сервисам и событиям без запуска окна |
 | `go test -v ./...` | Запускает все модульные и интеграционные тесты Go (`internal/terminal`, `internal/system`, `internal/logger`) |
 | `pnpm --dir frontend lint` | Запускает проверку кода фронтенда через ESLint |
 | `pnpm --dir frontend build` | Запускает строгую проверку типов `vue-tsc --noEmit` и сборку `vite build` |

@@ -1,5 +1,7 @@
 package terminal
 
+import "github.com/wailsapp/wails/v3/pkg/application"
+
 // Events emitted to the frontend.
 const (
 	// EventTerminalOutput carries a base64-encoded chunk of raw PTY output.
@@ -9,3 +11,8 @@ const (
 	// EventTerminalExit carries the shell's exit code.
 	EventTerminalExit = "terminal:exit"
 )
+
+func init() {
+	application.RegisterEvent[string](EventTerminalOutput)
+	application.RegisterEvent[int](EventTerminalExit)
+}

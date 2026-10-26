@@ -30,7 +30,7 @@
 
 ---
 
-**Kutex** combines a native Go pseudo-terminal (PTY) backend with a lightweight, GPU-accelerated terminal frontend. Unlike Electron-based terminals that ship an entire Chromium instance, Kutex runs on [Wails v2](https://wails.io) using your operating system's native webview (WebKit2GTK on Linux, WebKit on macOS, WebView2 on Windows) for minimal memory overhead and instant startup.
+**Kutex** combines a native Go pseudo-terminal (PTY) backend with a lightweight, GPU-accelerated terminal frontend. Unlike Electron-based terminals that ship an entire Chromium instance, Kutex runs on [Wails v3](https://v3.wails.io) using your operating system's native webview (WebKitGTK 6.0 on Linux, WebKit on macOS, WebView2 on Windows) for minimal memory overhead and instant startup.
 
 ## Features
 
@@ -61,11 +61,11 @@ Download the latest archive for your platform from the [**Releases**](https://gi
 
 - **Go** `1.25+`
 - **Node.js** `22+` and **pnpm** `9+`
-- **Wails CLI** (`go install github.com/wailsapp/wails/v2/cmd/wails@latest`)
+- **Wails3 CLI** (`go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0`)
 - **Linux system libraries** (Ubuntu / Debian):
   ```bash
   sudo apt-get update
-  sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+  sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
   ```
 
 #### 2. Compile
@@ -73,11 +73,10 @@ Download the latest archive for your platform from the [**Releases**](https://gi
 ```bash
 git clone https://github.com/Khudo-R/kutex.git
 cd kutex
-wails build
+wails3 build
 ```
 
-The compiled native binary is placed in `build/bin/kutex` (or `build/bin/kutex.app` on macOS / `build/bin/kutex.exe` on Windows).
-
+The compiled native binary is placed in `bin/kutex` (or `bin/kutex.app` on macOS via `wails3 package` / `bin/kutex.exe` on Windows).
 ---
 
 ## Keyboard Shortcuts
@@ -149,7 +148,7 @@ kutex/
 Run the live development server with hot module replacement (HMR):
 
 ```bash
-wails dev
+wails3 dev
 ```
 
 Run the backend and frontend test suites:

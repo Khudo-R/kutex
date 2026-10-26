@@ -6,13 +6,12 @@ import (
 
 	"kutex/internal/logger"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // Terminal is the primary backend service bound to Wails. It bridges the frontend
 // to the interactive PTY session and background command executor.
 type Terminal struct {
-	ctx      context.Context
 	session  *Session
 	executor *Executor
 	history  *History
@@ -29,16 +28,17 @@ func New() *Terminal {
 	}
 }
 
-// Startup is called by Wails during application startup.
-func (t *Terminal) Startup(ctx context.Context) {
-	t.ctx = ctx
+// ServiceStartup is called by Wails during application startup.
+func (t *Terminal) ServiceStartup(_ context.Context, _ application.ServiceOptions) error {
 	t.log.Info("Terminal service initialized")
+	return nil
 }
 
-// Shutdown is called by Wails during application shutdown.
-func (t *Terminal) Shutdown(_ context.Context) {
+// ServiceShutdown is called by Wails during application shutdown.
+func (t *Terminal) ServiceShutdown() error {
 	t.log.Info("Terminal service shutting down")
 	t.Stop()
+	return nil
 }
 
 // Start launches the user's shell in an interactive PTY session.
@@ -47,15 +47,15 @@ func (t *Terminal) Start(cols, rows int) error {
 	t.log.Info("Starting interactive terminal", "cols", cols, "rows", rows, "cwd", cwd)
 
 	onOutput := func(b64 string) {
-		if t.ctx != nil {
-			runtime.EventsEmit(t.ctx, EventTerminalOutput, b64)
+		if app := application.Get(); app != nil {
+			app.Event.Emit(EventTerminalOutput, b64)
 		}
 	}
 
 	onExit := func(code int) {
 		t.log.Info("Terminal process exited", "exit_code", code)
-		if t.ctx != nil {
-			runtime.EventsEmit(t.ctx, EventTerminalExit, code)
+		if app := application.Get(); app != nil {
+			app.Event.Emit(EventTerminalExit, code)
 		}
 	}
 

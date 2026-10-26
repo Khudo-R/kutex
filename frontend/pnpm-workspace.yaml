@@ -1,4 +1,7 @@
 minimumReleaseAgeExcludePrune: true
+minimumReleaseAgeExclude:
+  - '@wailsio/runtime@3.0.0'
+
 trustPolicy: no-downgrade
 shellEmulator: true
 

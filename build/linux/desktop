@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=kutex
+Comment=Desktop terminal emulator built with Go and Wails
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/kutex %u
+Terminal=false
+Type=Application
+Icon=kutex
+Categories=Utility;
+StartupWMClass=kutex
+
+ 
