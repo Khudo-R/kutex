@@ -34,6 +34,28 @@ tasks:
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
+  test:
+    summary: Runs all unit and integration tests (Go + frontend)
+    cmds:
+      - go test -v ./internal/...
+      - pnpm --dir frontend test:run
+
+  lint:
+    summary: Runs Go vet and frontend ESLint
+    cmds:
+      - go vet ./...
+      - pnpm --dir frontend lint
+
+  bindings:
+    summary: Regenerates TypeScript bindings from Go services
+    cmds:
+      - wails3 generate bindings -ts
+
+  clean:
+    summary: Cleans build artifacts and caches
+    cmds:
+      - rm -rf bin build/bin frontend/dist frontend/coverage .task
+
   install:msix:tools:
     summary: Installs tools required for Windows MSIX packaging
     cmds:

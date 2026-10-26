@@ -588,13 +588,19 @@ Notice that during interactive typing, characters do not appear on screen immedi
 
 | Command | Description |
 |---|---|
-| `wails3 dev` | Starts the Vite dev server (`pnpm dev`) with hot module replacement (HMR), compiles the Go backend in dev mode, and opens the native desktop window using `./build/config.yml` |
-| `wails3 build` | Runs `go mod tidy`, generates icons and `.desktop` files, installs frontend dependencies (`pnpm install`), generates TypeScript bindings (`wails3 generate bindings -ts`), builds `frontend/dist`, and compiles the production binary into `bin/kutex` |
-| `wails3 generate bindings -ts` | Regenerates TypeScript bindings in `frontend/bindings/` from the registered Go services and custom events without starting the UI |
-| `pnpm lint` / `pnpm lint:fix` | Runs ESLint inside `frontend/` |
-| `pnpm build` | Runs `vue-tsc --noEmit && vite build` inside `frontend/` |
-| `go test -v ./...` | Runs all Go unit and integration tests ([internal/terminal/](internal/terminal/), [internal/system/](internal/system/), [internal/logger/](internal/logger/)) |
+| Command | Description |
+|---|---|
+| `./kutex dev` / `kutex dev` | Starts the Vite dev server with live reload (`wails3 dev -config ./build/config.yml -port 9245`) |
+| `./kutex build` / `kutex build` | Compiles the production executable (`wails3 build`) into `bin/kutex` |
+| `./kutex test` / `kutex test` | Runs all unit and integration tests (Go `go test` + Vitest `pnpm test:run`) |
+| `./kutex lint` / `kutex lint` | Runs `go vet` and ESLint (`pnpm lint`) |
+| `./kutex bindings` / `kutex bindings` | Regenerates TypeScript bindings from Go services (`wails3 generate bindings -ts`) |
+| `./kutex clean` / `kutex clean` | Removes build artifacts (`bin`, `build/bin`, `frontend/dist`, `.task`) |
+| `wails3 dev` | Direct Wails3 command for development |
+| `wails3 build` | Direct Wails3 command for production build |
+| `wails3 task <name>` | Runs tasks defined in `Taskfile.yml` |
 
+The project provides native cross-platform development runners: `./kutex` (POSIX bash script for Linux / WSL Arch) and `kutex.cmd` / `kutex.ps1` (for Windows 10 Command Prompt and PowerShell). Typing `kutex <command>` in the repository directory on Windows 10 works directly out of the box, and adding `alias kutex='./kutex'` on Linux / WSL Arch enables typing `kutex <command>` without `./`.
 The [build/](build/README.md) directory and root [Taskfile.yml](Taskfile.yml) contain Wails v3 build tasks and platform packaging assets: `build/config.yml`, application icons, Linux `.desktop`/AppImage/nfpm configs, macOS `Info.plist`, and Windows manifest/icon/NSIS/MSIX templates.
 
 ---

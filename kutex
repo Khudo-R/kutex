@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -e
+
+# Resolve repository root directory regardless of working directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+COMMAND="${1:-dev}"
+shift || true
+
+case "$COMMAND" in
+  dev)
+    exec wails3 dev -config ./build/config.yml -port 9245 "$@"
+    ;;
+  build)
+    exec wails3 build "$@"
+    ;;
+  package)
+    exec wails3 task package "$@"
+    ;;
+  run)
+    exec wails3 task run "$@"
+    ;;
+  test)
+    echo "==> Running Go tests..."
+    go test -v ./internal/...
+    echo "==> Running frontend tests..."
+    pnpm --dir frontend test:run "$@"
+    ;;
+  test:go)
+    exec go test -v ./internal/... "$@"
+    ;;
+  test:fe|test:frontend)
+    exec pnpm --dir frontend test:run "$@"
+    ;;
+  lint)
+    echo "==> Running go vet..."
+    go vet ./...
+    echo "==> Running frontend linter..."
+    pnpm --dir frontend lint "$@"
+    ;;
+  lint:fix)
+    exec pnpm --dir frontend lint:fix "$@"
+    ;;
+  bindings|generate)
+    exec wails3 generate bindings -ts "$@"
+    ;;
+  clean)
+    rm -rf bin build/bin frontend/dist frontend/coverage .task
+    echo "Cleaned build artifacts."
+    ;;
+  alias|setup-alias)
+    echo "To type 'kutex' instead of './kutex' on Linux / WSL, add an alias to your ~/.bashrc or ~/.zshrc:"
+    echo "  alias kutex='$SCRIPT_DIR/kutex'"
+    echo ""
+    echo "Or symlink into ~/.local/bin (ensure it's in your PATH):"
+    echo "  mkdir -p ~/.local/bin && ln -sf '$SCRIPT_DIR/kutex' ~/.local/bin/kutex"
+    ;;
+  help|-h|--help)
+    echo "Kutex development runner"
+    echo ""
+    echo "Usage: ./kutex <command> [args...]"
+    echo "   or: kutex <command> [args...] (when added to PATH or alias)"
+    echo ""
+    echo "Commands:"
+    echo "  dev           Start development server with live reload (wails3 dev)"
+    echo "  build         Build production binary (wails3 build)"
+    echo "  package       Package native installer/bundle (wails3 task package)"
+    echo "  run           Run compiled application binary"
+    echo "  test          Run all tests (Go unit tests + frontend Vitest)"
+    echo "  test:go       Run Go unit tests only"
+    echo "  test:fe       Run frontend Vitest tests only"
+    echo "  lint          Run linters (go vet + ESLint)"
+    echo "  lint:fix      Run ESLint auto-fix"
+    echo "  bindings      Regenerate TypeScript bindings from Go services"
+    echo "  clean         Remove build artifacts and temporary files"
+    echo "  alias         Show how to enable typing 'kutex' without ./"
+    ;;
+  *)
+    exec wails3 task "$COMMAND" "$@"
+    ;;
+esac

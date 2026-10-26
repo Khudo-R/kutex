@@ -820,9 +820,16 @@ sequenceDiagram
 
 | Команда | Описание |
 |---|---|
-| `wails3 dev` | Запускает режим живой разработки (по конфигурации `build/config.yml`): поднимает Vite dev-сервер с мгновенным HMR, компилирует Go-код в dev-режиме и открывает нативное окно приложения |
-| `wails3 build` | Запускает пайплайн `Taskfile.yml`: обновляет иконки и `.desktop`, устанавливает зависимости фронтенда (`pnpm install`), генерирует TS-привязки (`wails3 generate bindings -ts`), собирает `frontend/dist` и компилирует единый исполняемый файл в `bin/kutex` |
-| `wails3 generate bindings -ts` | Перегенерирует TypeScript-привязки в `frontend/bindings/` по зарегистрированным Go-сервисам и событиям без запуска окна |
-| `go test -v ./...` | Запускает все модульные и интеграционные тесты Go (`internal/terminal`, `internal/system`, `internal/logger`) |
-| `pnpm --dir frontend lint` | Запускает проверку кода фронтенда через ESLint |
-| `pnpm --dir frontend build` | Запускает строгую проверку типов `vue-tsc --noEmit` и сборку `vite build` |
+| `./kutex dev` / `kutex dev` | Запуск dev-сервера с живой перезагрузкой (`wails3 dev -config ./build/config.yml -port 9245`) |
+| `./kutex build` / `kutex build` | Полная сборка продакшен-бинарника (`wails3 build`) в `bin/kutex` |
+| `./kutex test` / `kutex test` | Запуск всех тестов проекта (Go unit-тесты + Vitest во фронтенде) |
+| `./kutex test:go` | Запуск только тестов бэкенда на Go (`go test -v ./internal/...`) |
+| `./kutex test:fe` | Запуск только тестов фронтенда (`pnpm --dir frontend test:run`) |
+| `./kutex lint` / `kutex lint` | Запуск линтеров (`go vet ./...` + ESLint) |
+| `./kutex lint:fix` | Автоисправление ошибок форматирования фронтенда через ESLint |
+| `./kutex bindings` / `kutex bindings` | Перегенерация TypeScript-привязок из Go-сервисов (`wails3 generate bindings -ts`) |
+| `./kutex clean` | Очистка скомпилированных файлов и кеша (`bin/`, `build/bin/`, `frontend/dist/`, `.task/`) |
+| `wails3 dev` | Прямая команда Wails3 для запуска dev-сервера |
+| `wails3 build` | Прямая команда Wails3 для сборки проекта |
+
+В проекте реализованы нативные кроссплатформенные раннеры: `./kutex` (скрипт bash для Linux / WSL Arch) и `kutex.cmd` / `kutex.ps1` (для Windows 10 командной строки и PowerShell). В Windows 10 в папке проекта команда `kutex dev` работает сразу из коробки, а в Linux / WSL Arch можно добавить `alias kutex='./kutex'` в `~/.bashrc` или `~/.zshrc` (подробнее: `./kutex alias`).

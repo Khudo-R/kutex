@@ -148,20 +148,29 @@ kutex/
 Run the live development server with hot module replacement (HMR):
 
 ```bash
-wails3 dev
+# On Linux / WSL (Arch Linux):
+./kutex dev
+
+# On Windows 10 (cmd or PowerShell):
+kutex dev
 ```
 
-Run the backend and frontend test suites:
+### Shortcuts Runner (`kutex`)
 
-```bash
-# Run Go unit tests with the race detector
-go test -v -race ./...
+The repository includes a cross-platform command runner (`./kutex` on Linux/WSL and `kutex.cmd` / `kutex.ps1` on Windows):
 
-# Run frontend unit tests & coverage (Vitest)
-cd frontend
-pnpm run test:coverage
-pnpm run lint
-```
+| Shortcut | Description | Underlying Command |
+|---|---|---|
+| `kutex dev` | Run development server with live reload | `wails3 dev -config ./build/config.yml` |
+| `kutex build` | Compile native production executable | `wails3 build` |
+| `kutex test` | Run all Go + Vitest unit tests | `go test ./... && pnpm test:run` |
+| `kutex test:go` | Run Go unit tests | `go test -v ./internal/...` |
+| `kutex test:fe` | Run frontend Vitest suite | `pnpm --dir frontend test:run` |
+| `kutex lint` | Run `go vet` and ESLint | `go vet ./... && pnpm lint` |
+| `kutex bindings` | Regenerate TypeScript bindings | `wails3 generate bindings -ts` |
+| `kutex clean` | Clean build artifacts and caches | `rm -rf bin build/bin frontend/dist .task` |
+
+> **Tip for Linux / WSL Arch**: Add `alias kutex='./kutex'` in your `~/.bashrc` or `~/.zshrc` (or run `./kutex alias` for setup hints) to type `kutex dev` without `./`. On Windows, typing `kutex dev` in the repository directory works out of the box!
 
 ---
 
