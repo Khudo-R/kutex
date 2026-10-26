@@ -90,14 +90,18 @@ flowchart LR
 ```text
 kutex/
 ├── main.go                                 # Точка входа Go: встраивание статики, настройка окна Wails, привязка сервисов
-├── go.mod / go.sum                         # Описание Go-модуля и дерево зависимостей (Wails v2, creack/pty)
+├── go.mod / go.sum                         # Описание Go-модуля и дерево зависимостей (Wails v2, creack/pty, UserExistsError/conpty)
 ├── wails.json                              # Конфигурация сборщика Wails (команды pnpm, тег webkit2_41)
 ├── internal/                               # Приватные пакеты Go-бэкенда
 │   ├── terminal/                           # Пакет управления терминалом
 │   │   ├── events.go                       # Константы имён событий ("terminal:output", "terminal:exit")
 │   │   ├── terminal.go                     # Фасад Terminal, экспортируемый во фронтенд через Wails Bind
-│   │   ├── session.go                      # Жизненный цикл интерактивного PTY и шелла (Start, Write, Resize, Stop, pump)
-│   │   ├── executor.go                     # Фоновое выполнение команд ($SHELL -c), перехват cd и чтение /proc/<pid>/cwd
+│   │   ├── session.go                      # Общие типы и обработчики PTY-сессии (OutputHandler, ExitHandler)
+│   │   ├── session_unix.go                 # Интерактивная PTY-сессия Unix/Linux/macOS на базе creack/pty
+│   │   ├── session_windows.go              # Интерактивная PTY-сессия Windows 10/11 на базе ConPTY (UserExistsError/conpty)
+│   │   ├── executor.go                     # Фоновое выполнение команд, перехват cd и отслеживание CWD
+│   │   ├── executor_unix.go                # Реализация фонового шелла (-c) и живое чтение /proc/<pid>/cwd для Unix
+│   │   ├── executor_windows.go             # Поддержка командных оболочек Windows (PowerShell, cmd.exe /c) и дисков
 │   │   ├── history.go                      # Потокобезопасный MRU-буфер истории команд в памяти
 │   │   ├── terminal_test.go                # Интеграционные тесты фасада Terminal
 │   │   ├── session_test.go                 # Модульные тесты PTY-сессии
@@ -150,9 +154,10 @@ kutex/
 ### 2.1. Конфигурация модуля (`go.mod`, `wails.json`)
 
 #### Файл [`go.mod`](file:///home/vlad/projects/kutex/go.mod)
-Объявляет модуль `kutex` под версию **Go 1.25.0** и использует всего две прямые внешние зависимости:
-1. **`github.com/creack/pty v1.1.24`** — стандартная де-факто библиотека в экосистеме Go для работы с псевдотерминалами (UNIX PTY). Она берёт на себя низкоуровневые системные вызовы `ioctl` для открытия пары master/slave файловых дескрипторов, создания новой сессии процесса (`setsid`), назначения управляющего терминала (`TIOCSCTTY`) и изменения размеров окна (`TIOCSWINSZ`).
-2. **`github.com/wailsapp/wails/v2 v2.17.0`** — фреймворк для создания кроссплатформенных десктопных приложений на Go и веб-технологиях (использует системный WebView вместо тяжёлого Chromium из Electron и предоставляет двусторонний IPC-мост между JS и Go).
+Объявляет модуль `kutex` под версию **Go 1.25.0** и использует внешние зависимости:
+1. **`github.com/creack/pty v1.1.24`** — стандартная де-факто библиотека в экосистеме Go для работы с псевдотерминалами (UNIX PTY на Linux и macOS). Она берёт на себя низкоуровневые системные вызовы `ioctl` для открытия пары master/slave файловых дескрипторов, создания новой сессии процесса (`setsid`), назначения управляющего терминала (`TIOCSCTTY`) и изменения размеров окна (`TIOCSWINSZ`).
+2. **`github.com/UserExistsError/conpty v0.1.4`** — библиотека для работы с нативным Windows Pseudo Console (**ConPTY**) API на Windows 10 (версия 1809+) и Windows 11. Позволяет создавать и подключать псевдоконсоль Windows (`CreatePseudoConsole`), изменять её размер (`ResizePseudoConsole`) и запускать современные Windows-оболочки (PowerShell, `cmd.exe`) с полной поддержкой ANSI/VT escape-последовательностей.
+3. **`github.com/wailsapp/wails/v2 v2.17.0`** — фреймворк для создания кроссплатформенных десктопных приложений на Go и веб-технологиях (использует системный WebView вместо Chromium из Electron и предоставляет двусторонний IPC-мост между JS и Go).
 
 #### Файл [`wails.json`](file:///home/vlad/projects/kutex/wails.json)
 Управляет процессом сборки и разработки Wails:
@@ -273,85 +278,45 @@ type Terminal struct {
 
 ---
 
-#### 3. [`internal/terminal/session.go`](file:///home/vlad/projects/kutex/internal/terminal/session.go) — Интерактивная PTY-сессия (`Session`)
+#### 3. [`internal/terminal/session.go`](file:///home/vlad/projects/kutex/internal/terminal/session.go), [`session_unix.go`](file:///home/vlad/projects/kutex/internal/terminal/session_unix.go) и [`session_windows.go`](file:///home/vlad/projects/kutex/internal/terminal/session_windows.go) — Интерактивная PTY-сессия (`Session`)
 
-Файл [`session.go`](file:///home/vlad/projects/kutex/internal/terminal/session.go) отвечает за низкоуровневую работу с псевдотерминалом (PTY) и дочерним процессом оболочки ОС.
+Модуль сессии отвечает за низкоуровневую работу с псевдотерминалом и дочерним процессом оболочки ОС. Для полной поддержки как POSIX-систем (Linux, macOS, WSL), так и нативной Windows 10/11 реализация разделена с помощью тегов компиляции:
+- [`session.go`](file:///home/vlad/projects/kutex/internal/terminal/session.go) содержит общие типы колбэков (`OutputHandler`, `ExitHandler`) и ошибку `errNotRunning`.
+- [`session_unix.go`](file:///home/vlad/projects/kutex/internal/terminal/session_unix.go) (`//go:build !windows`) — использует POSIX PTY через библиотеку `github.com/creack/pty`.
+- [`session_windows.go`](file:///home/vlad/projects/kutex/internal/terminal/session_windows.go) (`//go:build windows`) — использует нативный Windows Pseudo Console (**ConPTY**) API через библиотеку `github.com/UserExistsError/conpty`.
 
 ```go
+// Общие типы в session.go
 var errNotRunning = errors.New("terminal: shell is not running")
 
 type OutputHandler func(base64Data string)
 type ExitHandler func(exitCode int)
-
-type Session struct {
-	mu  sync.Mutex
-	cmd *exec.Cmd // Указатель на запущенный процесс оболочки ($SHELL)
-	pty *os.File  // Файловый дескриптор ведущей стороны псевдотерминала (PTY master)
-}
 ```
 
-Разберём устройство каждого метода и функции в `session.go`:
+##### 1. Реализация на Unix/Linux/macOS (`session_unix.go`)
+В Unix-системах структура `Session` содержит `cmd *exec.Cmd` и `pty *os.File`:
+- **Выделение PTY:** через `pty.StartWithSize(cmd, winsize(cols, rows))` открывается пара `/dev/ptmx` (master) и `/dev/pts/N` (slave).
+- **Размер и сигналы:** вызов `pty.Setsize(f, winsize(cols, rows))` отправляет ядру команду `TIOCSWINSZ`, и ядро автоматически посылает `SIGWINCH` активному процессу.
+- **Оболочка по умолчанию:** функция `defaultShell()` проверяет `$SHELL`, затем `/bin/bash`, `/bin/zsh`, `/bin/sh` и `"sh"`.
 
-##### Запуск процесса и выделение PTY: [`Start(cols, rows int, dir string, onOutput OutputHandler, onExit ExitHandler) error`](file:///home/vlad/projects/kutex/internal/terminal/session.go#L34-L55)
-1. **Гарантия отсутствия утечек (`s.Stop()`):**
-   В самом начале вызывается `s.Stop()`. Если предыдущая сессия ещё была активна, её процесс убивается, а файловый дескриптор закрывается перед созданием новой.
-2. **Подготовка команды (`exec.Command`):**
-   - Вызывается `defaultShell()` для определения пути к исполняемому файлу оболочки.
-   - Формируется окружение процесса: `cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")`. Переменные `TERM` и `COLORTERM` сообщают консольным утилитам (`ls`, `vim`, `bat`, `git`), что терминал поддерживает 256 цветов и 24-битную палитру RGB.
-   - Если передана рабочая папка `dir != ""`, устанавливается `cmd.Dir = dir`.
-3. **Создание псевдотерминала (`pty.StartWithSize(cmd, winsize(cols, rows))`):**
-   Под капотом библиотека `github.com/creack/pty` выполняет следующие системные операции в ядре Linux/macOS:
-   - Открывает устройство `/dev/ptmx`, получая файловый дескриптор **PTY master** (`f *os.File`), и разблокирует соответствующее ведомое устройство **PTY slave** (например, `/dev/pts/4`).
-   - Устанавливает начальный размер окна в строках и колонках через системный вызов `ioctl(fd, TIOCSWINSZ, &winsize)`.
-   - Запускает дочерний процесс `cmd` в новой сессии (`setsid`), привязывает дескриптор **PTY slave** к его потокам `stdin`, `stdout` и `stderr` и делает его управляющим терминалом процесса (`TIOCSCTTY`).
-   - Закрывает дескриптор slave в родительском процессе Go и возвращает дескриптор master `f`.
-4. **Сохранение состояния и старт чтения (`go s.pump(...)`):**
-   Под защитой мьютекса `s.mu` сохраняются `s.cmd = cmd` и `s.pty = f`, после чего в отдельной фоновой горутине запускается цикл чтения вывода `go s.pump(cmd, f, onOutput, onExit)`.
+##### 2. Реализация на Windows 10/11 (`session_windows.go`)
+В Windows нет `/dev/ptmx`. Начиная с Windows 10 (версия 1809) Microsoft добавила в `kernel32.dll` нативный механизм **ConPTY**:
+- **Структура `Session`:** хранит дескриптор `cpty *conpty.ConPty`, контекст отмены `ctx context.Context` и функцию `cancel context.CancelFunc`.
+- **Запуск псевдоконсоли:** вызов `conpty.Start(shell, conpty.ConPtyDimensions(cols, rows), conpty.ConPtyWorkDir(dir), conpty.ConPtyEnv(env))` создаёт пару анонимных каналов (pipes), инициализирует `_HPCON` через Win32 API `CreatePseudoConsole`, настраивает атрибуты потока `_PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` и запускает процесс оболочки через Win32 `CreateProcess`.
+- **Изменение размера:** метод `cpty.Resize(cols, rows)` вызывает Win32 API `ResizePseudoConsole`.
+- **Оболочка по умолчанию на Windows:**
+  1. Если задана переменная `$SHELL` (например, путь к Git Bash или Cygwin), проверяется её доступность через `exec.LookPath(sh)`.
+  2. Если в системе установлен современный PowerShell 7+ (`pwsh.exe`), запускается он.
+  3. Иначе запускается стандартный Windows PowerShell (`powershell.exe`), встроенный во все редакции Windows 10 и 11.
+  4. В качестве резервной оболочки используется `%COMSPEC%` (`cmd.exe`).
+- **Завершение и очистка:** при остановке `cpty.Close()` вызывает `ClosePseudoConsole`, освобождает системные дескрипторы и корректно завершает дочерний процесс.
 
-##### Цикл чтения вывода: [`pump(cmd *exec.Cmd, f *os.File, onOutput OutputHandler, onExit ExitHandler)`](file:///home/vlad/projects/kutex/internal/terminal/session.go#L114-L140)
-Это сердце интерактивного терминала, работающее в отдельной горутине всё время жизни шелла:
-
-```go
-func (s *Session) pump(cmd *exec.Cmd, f *os.File, onOutput OutputHandler, onExit ExitHandler) {
-	buf := make([]byte, 32*1024)
-	for {
-		n, err := f.Read(buf)
-		if n > 0 && s.currentPty() == f && onOutput != nil {
-			onOutput(base64.StdEncoding.EncodeToString(buf[:n]))
-		}
-		if err != nil {
-			break
-		}
-	}
-	_ = cmd.Wait()
-
-	s.mu.Lock()
-	stillCurrent := s.pty == f
-	if stillCurrent {
-		s.cmd, s.pty = nil, nil
-	}
-	s.mu.Unlock()
-
-	if stillCurrent {
-		_ = f.Close()
-		if onExit != nil {
-			onExit(cmd.ProcessState.ExitCode())
-		}
-	}
-}
-```
-
-Разберём тонкие инженерные детали этой функции:
-- **Буфер 32 КБ (`make([]byte, 32*1024)`):** За один системный вызов `f.Read(buf)` считывается до 32 КБ данных, напечатанных оболочкой или запущенной в ней программой.
-- **Почему данные кодируются в Base64 (`base64.StdEncoding.EncodeToString(buf[:n])`):**
-  Мост событий Wails сериализует аргументы в JSON (UTF-8 строки). В кодировке UTF-8 один символ (например, кириллица, эмодзи или иконка Nerd Font) занимает от 1 до 4 байт. Когда программа быстро выводит большой поток текста, граница чтения в 32 КБ может разрезать многобайтовый UTF-8 символ прямо посередине: первые 2 байта попадут в первый вызов `Read`, а оставшиеся 1–2 байта — в следующий. Если попытаться передать такой «разрезанный» срез байтов как обычную строку через JSON, парсер заменит некорректные байты на символ замены `U+FFFD` (``). Кодирование каждого чанка в Base64 гарантирует побайтовую точность передачи, а потоковый декодер UTF-8 внутри `xterm.js` (`term.write(Uint8Array)`) сам корректно склеивает разорванные на границе чанков символы.
-- **Защита от гонок при перезапуске (`s.currentPty() == f`):**
-  Если сессия была остановлена и тут же перезапущена, `s.pty` уже указывает на новый файл (или `nil`). Проверка `s.currentPty() == f` гарантирует, что «хвосты» вывода от старого закрывающегося PTY никогда не попадут в новый терминал.
-- **Выход из цикла и сбор зомби-процесса (`_ = cmd.Wait()`):**
-  Когда пользователь вводит `exit` (или нажимает `Ctrl+D`), дочерний процесс шелла завершается, ведомый дескриптор PTY slave закрывается, и в Linux `f.Read(buf)` на ведущем дескрипторе возвращает ошибку `EIO` (Input/output error). Цикл прерывается, и вызов `cmd.Wait()` освобождает ресурсы процесса в таблице процессов ОС (предотвращая появление процесса-зомби `<defunct>`) и заполняет `cmd.ProcessState`.
-- **Отличие естественного выхода от принудительного (`stillCurrent`):**
-  - Если пользователь сам вышел из шелла (`exit`), то к моменту завершения `cmd.Wait()` поле `s.pty` всё ещё равно `f` (`stillCurrent == true`). Тогда `pump` сам очищает `s.cmd, s.pty = nil, nil`, закрывает дескриптор `f.Close()` и вызывает `onExit(cmd.ProcessState.ExitCode())`, чтобы фронтенд показал сообщение `[process exited with code N, press Enter to restart]`.
-  - Если же остановка была вызвана принудительно методом `s.Stop()` (при закрытии приложения или перед перезапуском), то `Stop()` заранее обнулил `s.pty = nil` (`stillCurrent == false`). В этом случае `onExit` **не** вызывается, чтобы не слать ложные события завершения.
+##### Цикл чтения вывода: `pump()`
+В обеих платформах горутина `pump()` считывает порции данных в буфер 32 КБ:
+- На Unix читает из дескриптора `f.Read(buf)`.
+- На Windows читает из пайпа вывода `cpty.Read(buf)`.
+- Данные кодируются в Base64 (`base64.StdEncoding.EncodeToString`) для предотвращения разрыва многобайтовых символов UTF-8 при передаче через JSON-мост Wails.
+- При завершении процесса считывается и отправляется код завершения (`onExit(code)`). Spurious-события выхода при принудительном `Stop()` блокируются обнулением дескриптора под мьютексом.
 
 ##### Остальные методы и вспомогательные функции `session.go`:
 - **[`Write(data string) error`](file:///home/vlad/projects/kutex/internal/terminal/session.go#L58-L65):**
@@ -390,8 +355,8 @@ type Executor struct {
 
 - **[`GetCwd(activePid int) string`](file:///home/vlad/projects/kutex/internal/terminal/executor.go#L32-L50):**
   Определяет актуальную рабочую директорию:
-  1. **Живое чтение из `/proc/<pid>/cwd`:** Если передан `activePid > 0` (то есть интерактивный шелл в PTY сейчас запущен), метод выполняет `os.Readlink(fmt.Sprintf("/proc/%d/cwd", activePid))`. В ОС Linux ядро поддерживает виртуальную символическую ссылку `/proc/<pid>/cwd`, которая в реальном времени указывает на текущую рабочую папку процесса. Это значит, что если пользователь ввёл `cd /var/log` в интерактивном терминале, вызов `GetCwd` мгновенно вернёт `"/var/log"` без необходимости встраивать специальные хуки в `.bashrc` или `.zshrc`.
-  2. **Цепочка резервных значений (Fallback):** Если интерактивный шелл не запущен (`activePid == 0`) или чтение `/proc` недоступно, метод возвращает сохранённое поле `e.currentDir` (защищённое мьютексом `e.mu`). Если и оно пустое — возвращает `os.UserHomeDir()`, а в случае ошибки — корень `"/"`.
+  1. **Живое чтение через `procCwd(activePid)`:** На Linux ядро поддерживает виртуальную символическую ссылку `/proc/<pid>/cwd`, указывающую в реальном времени на текущую папку запущенного процесса. Если пользователь ввёл `cd /var/log` в интерактивном терминале, вызов `GetCwd` мгновенно вернёт `"/var/log"`. На Windows (где инспекция CWD внешнего процесса требует сложного чтения недокументированных структур PEB в чужой памяти) используется сохранённое значение рабочего каталога `e.currentDir`.
+  2. **Цепочка резервных значений (Fallback):** Если активный процесс не вернул путь, метод возвращает сохранённое поле `e.currentDir` (защищённое мьютексом `e.mu`). Если и оно пустое — возвращает `os.UserHomeDir()`, а в качестве системного корня (`defaultRootDir()`) — `"/"` на Unix или `C:\` (системный диск `%SystemDrive%`) на Windows.
 
 - **[`SetCwd(dir string)`](file:///home/vlad/projects/kutex/internal/terminal/executor.go#L53-L58):**
   Под мьютексом `e.mu` сохраняет старое значение `e.currentDir` в `e.prevDir` и записывает новый путь в `e.currentDir`.
@@ -401,18 +366,21 @@ type Executor struct {
   1. Убирает пробелы по краям (`strings.TrimSpace(command)`). Если строка пустая, сразу возвращает `"", nil`.
   2. Получает текущую директорию `cwd := e.GetCwd(activePid)`.
   3. **Перехват команды `cd` (`if isPureCd(trimmed)`):**
-     Почему `cd` нужно обрабатывать особо? Потому что `cd` — это встроенная команда оболочки (shell builtin), которая меняет рабочую директорию только того процесса, в котором вызвана. Если запустить `sh -c "cd /tmp"` в дочернем процессе, этот процесс сменит папку на `/tmp` и тут же завершится, а следующий вызов `ExecuteCommand("pwd")` снова запустится в старой папке. Поэтому чистые вызовы `cd` перехватываются и обрабатываются внутри Go методом `e.handleCd(trimmed, cwd)`.
-  4. **Запуск всех остальных команд:**
-     Создаётся подпроцесс `exec.Command(defaultShell(), "-c", command)`, ему выставляются `cmd.Dir = cwd` и переменные окружения `TERM=xterm-256color`, `COLORTERM=truecolor`. Метод `cmd.CombinedOutput()` ждёт завершения команды, собирает весь её вывод из `stdout` и `stderr` в один буфер и возвращает `string(out), err`.
+     Потому что `cd` — это встроенная команда оболочки (shell builtin), которая меняет рабочую директорию только того процесса, в котором вызвана. Чистые вызовы `cd` перехватываются и обрабатываются внутри Go методом `e.handleCd(trimmed, cwd)`.
+  4. **Кроссплатформенный запуск команд (`buildShellCmd`):**
+     - На Unix (Linux, macOS, WSL) создаётся подпроцесс `exec.Command(shell, "-c", command)`.
+     - На Windows реализация автоматически распознаёт тип оболочки: для `cmd.exe` формируется `exec.Command(shell, "/c", command)`, для PowerShell (`powershell.exe` / `pwsh.exe`) — `exec.Command(shell, "-NoProfile", "-NonInteractive", "-Command", command)`, а для POSIX-шеллов (`bash.exe` из Git/MSYS2) — флаг `-c`.
+     - Процессу выставляются `cmd.Dir = cwd` и переменные окружения `TERM=xterm-256color`, `COLORTERM=truecolor`. Метод `cmd.CombinedOutput()` ждёт завершения команды, собирает весь её вывод из `stdout` и `stderr` в один буфер и возвращает `string(out), err`.
 
 - **[`isPureCd(cmd string) bool`](file:///home/vlad/projects/kutex/internal/terminal/executor.go#L84-L89):**
-  Проверяет, является ли команда одиночным переходом `cd`: строка должна быть равна `"cd"` либо начинаться с `"cd "` или `"cd\t"`, и при этом **не должна** содержать операторов ветвления, пайпов, перенаправлений или подстановок (`|&;<>()$\``). Например, `cd /tmp` — это чистый `cd` (обрабатывается в Go), а `cd /tmp && ls` — составная команда (передаётся в `sh -c`).
+  Проверяет, является ли команда одиночным переходом `cd`: строка должна быть равна `"cd"` либо начинаться с `"cd "` или `"cd\t"`, и при этом **не должна** содержать операторов ветвления, пайпов, перенаправлений или подстановок (`|&;<>()$\``). Например, `cd /tmp` или `cd /d D:\project` — это чистый `cd` (обрабатывается в Go), а `cd /tmp && ls` — составная команда.
 
 - **[`handleCd(cmd, cwd string) (string, error)`](file:///home/vlad/projects/kutex/internal/terminal/executor.go#L91-L136):**
   Полная эмуляция поведения шелловского `cd` средствами Go:
   1. Отрезает префикс `"cd"` (`strings.TrimSpace(cmd[2:])`).
-  2. Если аргумент заключён в парные двойные (`"..."`) или одинарные (`'...'`) кавычки (например, `cd "My Folder"`), снимает их.
-  3. Вычисляет целевой путь `targetDir`:
+  2. Поддерживает Windows-флаг смены диска `/d` (например, `cd /d D:\workspace`).
+  3. Если аргумент заключён в парные кавычки (`"..."` или `'...'`), снимает их.
+  4. Поддерживает `cd` или `cd ~` (переход в `os.UserHomeDir()`), `cd -` (возврат в `e.prevDir`), `~/path` и `~\path`, а также абсолютные пути с буквой диска (`D:\path`) и относительные пути.
      - `cd` (без аргументов) или `cd ~` → домашняя папка `os.UserHomeDir()`.
      - `cd -` → берёт предыдущую директорию `e.prevDir` (или оставляет `cwd`, если `prevDir` ещё пуст).
      - `cd ~/...` → заменяет префикс `~/` на домашнюю директорию через `filepath.Join(home, target[2:])`.

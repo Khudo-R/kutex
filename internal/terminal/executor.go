@@ -3,7 +3,6 @@ package terminal
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -28,12 +27,10 @@ func NewExecutor() *Executor {
 }
 
 // GetCwd returns the current working directory.
-// If an active process PID is provided, it first tries to inspect /proc/<pid>/cwd on Linux.
+// If an active process PID is provided, it first tries to inspect it on platforms that support it.
 func (e *Executor) GetCwd(activePid int) string {
-	if activePid > 0 {
-		if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", activePid)); err == nil && cwd != "" {
-			return cwd
-		}
+	if cwd := procCwd(activePid); cwd != "" {
+		return cwd
 	}
 
 	e.mu.Lock()
@@ -46,7 +43,7 @@ func (e *Executor) GetCwd(activePid int) string {
 	if home, err := os.UserHomeDir(); err == nil {
 		return home
 	}
-	return "/"
+	return defaultRootDir()
 }
 
 // SetCwd updates the tracked working directory.
@@ -73,9 +70,8 @@ func (e *Executor) Execute(command string, activePid int) (string, error) {
 	}
 
 	shell := defaultShell()
-	cmd := exec.Command(shell, "-c", command)
+	cmd := buildShellCmd(shell, command)
 	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -90,6 +86,11 @@ func isPureCd(cmd string) bool {
 
 func (e *Executor) handleCd(cmd, cwd string) (string, error) {
 	target := strings.TrimSpace(cmd[2:])
+
+	// Handle Windows "cd /d <path>" flag to change drive & directory
+	if strings.HasPrefix(strings.ToLower(target), "/d ") {
+		target = strings.TrimSpace(target[3:])
+	}
 
 	// Strip surrounding quotes
 	if len(target) >= 2 {
@@ -110,7 +111,7 @@ func (e *Executor) handleCd(cmd, cwd string) (string, error) {
 			targetDir = cwd
 		}
 	} else {
-		if strings.HasPrefix(target, "~/") {
+		if strings.HasPrefix(target, "~/") || strings.HasPrefix(target, "~\\") {
 			if home, err := os.UserHomeDir(); err == nil {
 				target = filepath.Join(home, target[2:])
 			}

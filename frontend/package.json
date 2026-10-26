@@ -1,8 +1,12 @@
 {
   "name": "frontend",
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.0.1-pre-alpha",
   "private": true,
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",

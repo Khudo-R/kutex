@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { executeCommand, getCwd, runCommand } from '@/entities/terminal'
 import { clearHistory, getHistory } from '@/features/command-history'
+import { getFolders, getFoldersRecursive } from '@/features/folder-navigator'
 import { registerKutexGlobal } from './kutex-global'
 
 vi.mock('@/entities/terminal', () => ({
@@ -14,6 +15,11 @@ vi.mock('@/features/command-history', () => ({
   clearHistory: vi.fn(),
 }))
 
+vi.mock('@/features/folder-navigator', () => ({
+  getFolders: vi.fn(),
+  getFoldersRecursive: vi.fn(),
+}))
+
 describe('registerKutexGlobal', () => {
   it('registers programmatic API methods on window.kutex by default', () => {
     registerKutexGlobal()
@@ -25,6 +31,8 @@ describe('registerKutexGlobal', () => {
       getCwd,
       getHistory,
       clearHistory,
+      getFolders,
+      getFoldersRecursive,
     })
   })
 
@@ -38,6 +46,8 @@ describe('registerKutexGlobal', () => {
       getCwd,
       getHistory,
       clearHistory,
+      getFolders,
+      getFoldersRecursive,
     })
   })
 })

@@ -121,22 +121,30 @@ The terminal backend is isolated in the `internal/terminal` package and designed
 
 ```text
 internal/terminal/
-├── terminal.go       # Wails service facade coordinating Session, Executor, History, and Wails events
-├── session.go        # Interactive PTY session lifecycle (creack/pty, pump loop, write, resize, stop)
-├── executor.go       # Background command execution engine and CWD / cd navigation tracking
-├── history.go        # Thread-safe in-memory MRU command history store
-├── events.go         # Wails event name constants ("terminal:output", "terminal:exit")
-├── terminal_test.go  # Service-level tests for Terminal (CWD, ExecuteCommand, RunCommand, History)
-├── session_test.go   # PTY session lifecycle tests (Start, Write, Resize, Stop)
-├── executor_test.go  # Command execution and cd navigation tests (pwd, cd, cd -, cd ~, quotes, errors)
-└── history_test.go   # Unit tests for History (ordering, deduplication, max capacity, defensive copy, clear)
+├── terminal.go          # Wails service facade coordinating Session, Executor, History, and Wails events
+├── session.go           # Common types and callbacks for PTY sessions (OutputHandler, ExitHandler)
+├── session_unix.go      # Interactive PTY session lifecycle on Unix/Linux/macOS (creack/pty)
+├── session_windows.go   # Interactive PTY session lifecycle on Windows 10/11 (UserExistsError/conpty)
+├── executor.go          # Background command execution engine and CWD / cd navigation tracking
+├── executor_unix.go     # Unix shell command builder (-c) and live /proc/<pid>/cwd inspection
+├── executor_windows.go  # Windows shell command builder (powershell.exe / cmd.exe /c) and drive root handling
+├── history.go           # Thread-safe in-memory MRU command history store
+├── events.go            # Wails event name constants ("terminal:output", "terminal:exit")
+├── terminal_test.go     # Service-level tests for Terminal (CWD, ExecuteCommand, RunCommand, History)
+├── session_test.go      # PTY session lifecycle tests (Start, Write, Resize, Stop)
+├── executor_test.go     # Command execution and cd navigation tests (pwd, cd, cd -, cd ~, quotes, errors)
+└── history_test.go      # Unit tests for History (ordering, deduplication, max capacity, defensive copy, clear)
 ```
 
 | File | Responsibility |
 |---|---|
 | [terminal.go](internal/terminal/terminal.go) | Wails service facade: coordinates `Session`, `Executor`, and `History`; implements `Startup` and `Shutdown`; bridges PTY callbacks to `runtime.EventsEmit` |
-| [session.go](internal/terminal/session.go) | Interactive PTY session: spawns `$SHELL` inside a pseudo-terminal (`creack/pty`), continuously reads output in `pump()`, forwards input (`Write`), updates terminal dimensions (`Resize`), and terminates the shell (`Stop`) |
-| [executor.go](internal/terminal/executor.go) | Background command runner: executes one-off commands via `$SHELL -c`, intercepts and validates pure `cd` commands, and inspects `/proc/<pid>/cwd` to track the live working directory |
+| [session.go](internal/terminal/session.go) | Common session types, `errNotRunning`, and callback signatures (`OutputHandler`, `ExitHandler`) |
+| [session_unix.go](internal/terminal/session_unix.go) | Interactive PTY session for Unix: spawns `$SHELL` inside a pseudo-terminal (`creack/pty`), reads output in `pump()`, handles `Write`, `Resize`, and `Stop` |
+| [session_windows.go](internal/terminal/session_windows.go) | Interactive PTY session for Windows 10/11: launches PowerShell or `cmd.exe` in a native pseudo-console (`UserExistsError/conpty`), reads output in `pump()`, handles `Write`, `Resize`, and `Stop` |
+| [executor.go](internal/terminal/executor.go) | Background command runner: coordinates execution, intercepts and validates `cd` commands across calls, and tracks CWD |
+| [executor_unix.go](internal/terminal/executor_unix.go) | Spawns background commands via Unix `$SHELL -c` and inspects `/proc/<pid>/cwd` in real time |
+| [executor_windows.go](internal/terminal/executor_windows.go) | Dispatches background commands to `cmd.exe /c` or PowerShell `-Command`, handles Windows drive paths (`cd /d`) and root directories (`C:\`) |
 | [history.go](internal/terminal/history.go) | Thread-safe Most-Recently-Used (MRU) command history store holding up to 1,000 commands across shell restarts |
 | [events.go](internal/terminal/events.go) | Defines the Wails event constants `EventTerminalOutput` (`"terminal:output"`) and `EventTerminalExit` (`"terminal:exit"`) |
 | [terminal_test.go](internal/terminal/terminal_test.go) | Integration tests for the `Terminal` service |
@@ -184,78 +192,39 @@ type Terminal struct {
 
 ---
 
-### 3.2 Interactive PTY Session — `Session` (`session.go`)
+### 3.2 Interactive PTY Session — `Session` (`session.go`, `session_unix.go`, `session_windows.go`)
 
-`Session` encapsulates the pseudo-terminal (`github.com/creack/pty`) and child shell process. Crucially, **`Session` has zero dependency on Wails**—it communicates strictly through plain Go callbacks (`OutputHandler` and `ExitHandler`), making it straightforward to test in isolation.
+`Session` encapsulates the pseudo-terminal layer and child shell process. Crucially, **`Session` has zero dependency on Wails**—it communicates strictly through plain Go callbacks (`OutputHandler` and `ExitHandler`), making it straightforward to test in isolation.
 
-```go
-type OutputHandler func(base64Data string)
-type ExitHandler func(exitCode int)
+The implementation is cleanly decoupled by OS build tags:
+- **`session.go`**: Declares shared types (`OutputHandler`, `ExitHandler`) and the `errNotRunning` sentinel error.
+- **`session_unix.go` (`//go:build !windows`)**: Implements the Unix pseudo-terminal using `github.com/creack/pty`. It manages `cmd *exec.Cmd` and `pty *os.File`, allocates `/dev/ptmx` and `/dev/pts/N`, applies `TIOCSWINSZ` window sizing ioctls, and discovers shells (`$SHELL`, `/bin/bash`, `/bin/zsh`, `/bin/sh`).
+- **`session_windows.go` (`//go:build windows`)**: Implements native Windows pseudo-terminal support on Windows 10 (1809+) and Windows 11 using the Windows Pseudo Console (**ConPTY**) API via `github.com/UserExistsError/conpty`. It creates an `_HPCON` pseudo console attached to anonymous pipes, launches the shell via Win32 `CreateProcess` with `_PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE`, dynamically resizes via `ResizePseudoConsole`, and cleans up all handles on `Stop()`.
 
-type Session struct {
-    mu  sync.Mutex
-    cmd *exec.Cmd // active shell process
-    pty *os.File  // master PTY file descriptor
-}
-```
+#### Default Shell Resolution on Windows
+On Windows, `defaultShell()` dynamically selects the best available shell:
+1. If `$SHELL` is set and resolvable (e.g., Git Bash `bash.exe`), it uses that path.
+2. Next, checks for modern PowerShell 7+ (`pwsh.exe`) via `exec.LookPath`.
+3. Falls back to Windows PowerShell (`powershell.exe`), available out-of-the-box on all Windows 10 and 11 systems.
+4. Falls back to `%COMSPEC%` (`cmd.exe`).
 
 #### Starting a Session: `Start(cols, rows int, dir string, onOutput OutputHandler, onExit ExitHandler) error`
-1. **Clean Up Previous Session:** Calls `s.Stop()` first so any previously running shell and PTY are closed before starting a new one.
-2. **Resolve Default Shell:** Calls `defaultShell()`, which checks `$SHELL` first, then falls back through `/bin/bash`, `/bin/zsh`, `/bin/sh`, and finally `"sh"`.
-3. **Configure Environment & Working Directory:** Copies the parent environment (`os.Environ()`) and appends `TERM=xterm-256color` and `COLORTERM=truecolor` so CLI tools know 256-color and 24-bit truecolor sequences are supported. Sets `cmd.Dir = dir` if non-empty.
-4. **Allocate PTY & Spawn Shell:** Calls `pty.StartWithSize(cmd, winsize(cols, rows))`. Under the hood, `creack/pty`:
-   - Opens a new PTY master/slave pair (`/dev/ptmx` and `/dev/pts/N` on Linux).
-   - Sets the terminal window size (`TIOCSWINSZ` ioctl) on the PTY.
-   - Starts the child process in a new session (`setsid`) with the slave FD attached as its `stdin`, `stdout`, and `stderr`, and sets the slave as the process's controlling terminal (`TIOCSCTTY`).
-   - Closes the slave FD in the parent Go process and returns the master file descriptor `f`.
-5. **Save State & Start Output Pump:** Stores `s.cmd = cmd` and `s.pty = f` under `s.mu`, then launches the background reader goroutine `go s.pump(cmd, f, onOutput, onExit)`.
+1. **Clean Up Previous Session:** Calls `s.Stop()` first so any previously running shell and PTY / ConPTY are closed before starting a new one.
+2. **Resolve Default Shell & Environment:** Calls `defaultShell()`, sets `TERM=xterm-256color` and `COLORTERM=truecolor` so CLI tools know 256-color and 24-bit truecolor sequences are supported, and sets the working directory `dir` if non-empty.
+3. **Allocate PTY / ConPTY & Spawn Shell:**
+   - On Unix: calls `pty.StartWithSize(cmd, winsize(cols, rows))`.
+   - On Windows: calls `conpty.Start(shell, conpty.ConPtyDimensions(cols, rows), conpty.ConPtyWorkDir(dir), conpty.ConPtyEnv(env))`.
+4. **Save State & Start Output Pump:** Stores session handles under `s.mu`, then launches the background reader goroutine `go s.pump(..., onOutput, onExit)`.
 
-#### Writing Input: `Write(data string) error`
-Reads the current master PTY pointer (`s.currentPty()`). If `nil`, returns `errNotRunning` (`"terminal: shell is not running"`). Otherwise writes `[]byte(data)` directly to the master PTY file descriptor, which the OS kernel delivers to the foreground process group's `stdin` (applying line discipline rules such as `SIGINT` on `\x03` when appropriate).
-
-#### Resizing the Terminal: `Resize(cols, rows int) error`
-Calls `pty.Setsize(f, winsize(cols, rows))`. `winsize` normalizes any non-positive `cols` or `rows` to the standard `80×24` fallback before constructing a `pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}`. The kernel updates the PTY geometry and sends `SIGWINCH` to the foreground process group so full-screen programs (`vim`, `htop`, `tmux`) immediately reflow their layout.
-
-#### Stopping the Session: `Stop()`
-Acquires `s.mu`, captures `cmd` and `f`, and clears `s.cmd = nil` and `s.pty = nil` *before* killing the process. Clearing `s.pty` first tells the running `pump()` goroutine that this stop was intentional. It then calls `cmd.Process.Kill()` and `f.Close()`. Closing the master PTY sends `SIGHUP` to the shell's process group, while `Kill()` guarantees the shell process itself cannot hang; `pump()` subsequently reaps the process via `cmd.Wait()`.
-
-#### Reading Output: `pump(cmd *exec.Cmd, f *os.File, onOutput OutputHandler, onExit ExitHandler)`
-```text
-buf := make([]byte, 32*1024)
-for {
-    n, err := f.Read(buf)
-    if n > 0 && s.currentPty() == f && onOutput != nil {
-        onOutput(base64.StdEncoding.EncodeToString(buf[:n]))
-    }
-    if err != nil {
-        break // EIO on Linux when slave closes after shell exit, or ErrClosed after Stop()
-    }
-}
-_ = cmd.Wait()
-
-s.mu.Lock()
-stillCurrent := s.pty == f
-if stillCurrent {
-    s.cmd, s.pty = nil, nil
-}
-s.mu.Unlock()
-
-if stillCurrent {
-    _ = f.Close()
-    if onExit != nil {
-        onExit(cmd.ProcessState.ExitCode())
-    }
-}
-```
-
-Key design details in `pump()`:
-- **Why Base64 Encoding Is Used:** Wails events are serialized as JSON strings. UTF-8 characters can be 1 to 4 bytes long, and an arbitrary 32 KB `Read` boundary can split a multi-byte UTF-8 sequence (such as a Nerd Font icon or CJK character) in the middle. Sending raw bytes in a JSON string would replace split sequences with `U+FFFD` replacement characters (``). Encoding each chunk as Base64 preserves exact byte fidelity across the JSON bridge, and xterm.js's built-in streaming UTF-8 decoder (`term.write(Uint8Array)`) seamlessly reassembles split multi-byte characters across chunks.
-- **Session Identity Check (`s.currentPty() == f`):** Protects against race conditions if a session is stopped and restarted rapidly. Any lingering buffered bytes from an old PTY are ignored once `s.pty` points to a new file descriptor (or `nil`).
-- **Natural vs. Forced Exit (`stillCurrent`):** `onExit` is only invoked if `s.pty == f` when `pump()` finishes—meaning the shell exited naturally (e.g., the user typed `exit` or pressed `Ctrl+D`). When `Stop()` is called explicitly (such as on app shutdown or before a restart), `s.pty` is already `nil`, so no spurious `terminal:exit` event is emitted.
+#### Reading Output: `pump()`
+Reads output chunks in a 32 KB buffer (`buf := make([]byte, 32*1024)`):
+- Reads from the master PTY file descriptor `f.Read(buf)` on Unix, or from `cpty.Read(buf)` on Windows.
+- Base64 encodes each chunk before dispatching `onOutput` across the JSON bridge.
+- Waits for process termination (`cmd.Wait()` on Unix, `cpty.Wait(ctx)` on Windows) and emits the exit code via `onExit(code)`. If `Stop()` was triggered programmatically, `s.pty` / `s.cpty` is cleared to `nil` first to suppress spurious exit events.
 
 ---
 
-### 3.3 Background Command Execution & Directory Tracking — `Executor` (`executor.go`)
+### 3.3 Background Command Execution & Directory Tracking — `Executor` (`executor.go`, `executor_unix.go`, `executor_windows.go`)
 
 `Executor` handles programmatic background command execution (`ExecuteCommand`) and tracks the working directory across both interactive and background contexts.
 
@@ -268,25 +237,22 @@ type Executor struct {
 ```
 
 #### `GetCwd(activePid int) string`
-1. **Live Inspection via `/proc`:** If the interactive shell is running (`activePid > 0`), `GetCwd` reads the symbolic link `/proc/<pid>/cwd` using `os.Readlink`. On Linux, the kernel maintains this symlink pointing to the process's exact current working directory in real time—meaning if the user types `cd /var/log` inside the interactive terminal, `GetCwd()` immediately reflects `/var/log` without needing shell hooks.
-2. **Fallback Chain:** If the interactive shell is not running (or `/proc` is unavailable), `GetCwd` returns `e.currentDir` (initialized to `os.UserHomeDir()` in `NewExecutor()`), falling back to `os.UserHomeDir()` and finally `"/"`.
+1. **Live Inspection (`procCwd`):**
+   - On Linux: reads `/proc/<pid>/cwd` via `os.Readlink` in real time when `activePid > 0`.
+   - On Windows: external PID CWD inspection requires reading foreign process PEB memory, so `procCwd` cleanly falls back to the tracked `e.currentDir`.
+2. **Fallback Chain:** If the interactive shell is not running, `GetCwd` returns `e.currentDir`, falling back to `os.UserHomeDir()` and finally `defaultRootDir()` (`"/"` on Unix, `C:\` / `%SystemDrive%\` on Windows).
 
 #### `Execute(command string, activePid int) (string, error)`
 1. **Empty Command Short-Circuit:** Trims whitespace; if empty, returns `"", nil`.
 2. **Intercepting Pure `cd` Commands (`isPureCd` & `handleCd`):**
-   - Because `cd` is a shell builtin that only mutates the child shell's own process state, running `sh -c "cd /tmp"` in a subprocess would exit immediately without changing the directory for subsequent `ExecuteCommand` calls.
-   - `isPureCd(cmd)` checks whether the command is `"cd"` or starts with `"cd "` / `"cd\t"`, and contains **no** shell metacharacters or chaining operators (`|&;<>()$\``).
-   - If it is a pure `cd`, `handleCd(trimmed, cwd)` resolves the target path in Go:
-     - Strips matching surrounding double (`"..."`) or single (`'...'`) quotes so paths with spaces like `cd "My Documents"` work properly.
-     - `cd` or `cd ~` → resolves to `os.UserHomeDir()`.
-     - `cd -` → swaps to `e.prevDir` (or stays at `cwd` if `prevDir` is not yet set).
-     - `cd ~/subpath` → expands `~/` using `os.UserHomeDir()` and `filepath.Join`.
-     - Relative paths (e.g., `cd ../foo`) are joined with `cwd` and normalized via `filepath.Clean`; absolute paths are cleaned directly.
-     - Validates the target on disk via `os.Stat(targetDir)` and verifies `info.IsDir()` (returning `"cd: not a directory: ..."` if it points to a file).
-     - Calls `e.SetCwd(targetDir)` (which saves the old `currentDir` into `prevDir` and updates `currentDir`), logs the directory change via `logger.Component("executor")`, and returns `"", nil`.
-3. **Executing Standard & Compound Commands:**
-   - For all other commands (e.g., `ls -la`, `git status`, or compound commands like `cd /tmp && ls`), `Execute` spawns `exec.Command(defaultShell(), "-c", command)` with `cmd.Dir = cwd` and `TERM=xterm-256color`, `COLORTERM=truecolor`.
-   - Captures and returns combined `stdout` and `stderr` via `cmd.CombinedOutput()`.
+   - Intercepts standalone `cd` invocations in Go to preserve directory state across background calls.
+   - Handles Windows drive switch flag `/d` (e.g., `cd /d D:\project`).
+   - Resolves `~`, `~/path`, `~\path`, `cd -`, quotes (`"..."`, `'...'`), relative paths, and Windows drive roots (`C:\path`).
+   - Validates the target directory on disk with `os.Stat` and records the change in `e.currentDir`.
+3. **Cross-Platform Shell Command Execution (`buildShellCmd`):**
+   - On Unix: executes via `exec.Command(shell, "-c", command)`.
+   - On Windows: inspects the executable basename—uses `/c` for `cmd.exe` (`exec.Command(shell, "/c", command)`), `-NoProfile -NonInteractive -Command` for `powershell.exe` / `pwsh.exe`, and `-c` for POSIX shells.
+   - Sets `cmd.Dir = cwd` and captures combined stdout/stderr.
 
 ---
 
@@ -644,7 +610,7 @@ The [build/](build/README.md) directory contains platform packaging assets for W
      - If the user types ahead while a foreground command is still printing output, the start marker may anchor before the next prompt appears.
      - Lines typed into interactive REPLs running in the normal buffer (such as `python` or `node`) are also captured when `Enter` is pressed; full-screen TUI apps using the alternate buffer (`vim`, `less`, `htop`) are automatically excluded.
    - **Clearing the Line Before Re-Run:** When running a command from `HistoryPanel.vue`, `App.vue` sends `\x05\x15` (`Ctrl+E` + `Ctrl+U`) to clear any half-typed input at the prompt. This relies on standard Emacs-mode readline/zle bindings (the default in `bash` and `zsh`) and may not clear the line if the user has configured `bindkey -v` (vi normal mode) in their shell.
-4. **Windows Platform Support:** Although `build/windows` contains packaging assets, `creack/pty` returns `ErrUnsupported` on Windows, `defaultShell()` looks up Unix shell paths, and `Executor.GetCwd` inspects `/proc/<pid>/cwd`. Supporting Windows would require a ConPTY backend (e.g., `github.com/UserExistsError/conpty`) and defaulting to `pwsh.exe` / `powershell.exe` / `cmd.exe`.
+4. **Windows Platform Support (Resolved):** Native Windows 10/11 support is fully implemented using the Windows Pseudo Console (**ConPTY**) API (`github.com/UserExistsError/conpty`). The backend is cleanly modularized via build tags (`session_unix.go` vs `session_windows.go`, and `executor_unix.go` vs `executor_windows.go`). Windows interactive sessions default to modern PowerShell 7+ (`pwsh.exe`) or Windows PowerShell (`powershell.exe`) with fallback to `%COMSPEC%` (`cmd.exe`), and background execution handles `cmd.exe /c`, PowerShell `-Command`, `cd /d` drive switches, and Windows drive roots (`C:\`).
 5. **Unused Frontend Dependency:** `vue-router` is listed in `frontend/package.json` but is not currently used by the single-window terminal UI.
 6. **Output Batching & Backpressure:** Each `Read` of up to 32 KB in `pump()` emits an individual Wails event (`terminal:output`) with ~33% Base64 overhead. Under extreme output throughput (e.g., `cat` on a multi-gigabyte file or `yes`), the WebView event queue can lag behind the PTY reader. Coalescing output over a ~4–16 ms window and/or pausing `pump()` until xterm's `term.write(data, callback)` acknowledges processing would provide end-to-end backpressure.
 7. **Concurrent `Start` Calls:** Calling `Session.Start` concurrently from multiple goroutines could race between `s.Stop()` and `pty.StartWithSize`. The UI only calls `Start` sequentially (`onReady` and `Enter` after exit), but holding a lifecycle mutex across the entire `Start` method would harden it against concurrent callers.

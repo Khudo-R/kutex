@@ -2,3 +2,5 @@ build/bin
 node_modules
 frontend/dist
 frontend/coverage
+how-it-words.md
+HOW_IT_WORKS_RU.md

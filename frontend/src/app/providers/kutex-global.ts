@@ -1,5 +1,6 @@
 import { executeCommand, getCwd, runCommand } from '@/entities/terminal'
 import { clearHistory, getHistory } from '@/features/command-history'
+import { getFolders, getFoldersRecursive } from '@/features/folder-navigator'
 
 export interface KutexGlobalApi {
   executeCommand: typeof executeCommand
@@ -7,6 +8,8 @@ export interface KutexGlobalApi {
   getCwd: typeof getCwd
   getHistory: typeof getHistory
   clearHistory: typeof clearHistory
+  getFolders: typeof getFolders
+  getFoldersRecursive: typeof getFoldersRecursive
 }
 
 /** Exposes programmatic command methods on `window.kutex`. */
@@ -17,5 +20,7 @@ export function registerKutexGlobal(target: { kutex?: KutexGlobalApi } = window 
     getCwd,
     getHistory,
     clearHistory,
+    getFolders,
+    getFoldersRecursive,
   }
 }

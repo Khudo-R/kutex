@@ -2,6 +2,7 @@
 import type { Terminal } from '@xterm/xterm'
 import { onBeforeUnmount, ref, shallowRef, useTemplateRef } from 'vue'
 import {
+  getCwd,
   onTerminalExit,
   onTerminalOutput,
   resizeTerminal,
@@ -17,6 +18,7 @@ import {
   getHistory,
   HistoryPanel,
 } from '@/features/command-history'
+import { FolderPanel } from '@/features/folder-navigator'
 import { safePromiseTyped } from '@/shared/lib/safe-promise'
 
 const terminal = useTemplateRef<InstanceType<typeof XTerminal>>('terminal')
@@ -32,6 +34,8 @@ let capture: CommandCapture | undefined
 
 const historyOpen = shallowRef(false)
 const historyCommands = ref<string[]>([])
+const foldersOpen = shallowRef(false)
+const currentCwd = shallowRef('.')
 
 // Subscribe during setup, before XTerminal mounts and starts the shell,
 // so no early output (like the first prompt) is missed.
@@ -53,13 +57,18 @@ function onReady(term: Terminal) {
 
 /** Intercepts app shortcuts before xterm turns them into shell input. */
 function onKey(e: KeyboardEvent): boolean {
-  const isHistoryShortcut = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.code === 'KeyH'
-  if (!isHistoryShortcut)
+  const isCtrlShift = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey
+  if (!isCtrlShift || (e.code !== 'KeyH' && e.code !== 'KeyF'))
     return true
 
   if (e.type === 'keydown') {
     e.preventDefault()
-    openHistory()
+    if (e.code === 'KeyH') {
+      openHistory()
+    }
+    else {
+      openFolders()
+    }
   }
   return false
 }
@@ -94,6 +103,7 @@ function onResize({ cols, rows }: { cols: number, rows: number }) {
 }
 
 async function openHistory() {
+  foldersOpen.value = false
   const [err, data] = await safePromiseTyped(getHistory())
   if (err || data === undefined) {
     console.error('loading history failed:', err)
@@ -130,6 +140,32 @@ async function clearHistory() {
   }
   historyCommands.value = []
 }
+
+async function openFolders() {
+  historyOpen.value = false
+  const [err, cwd] = await safePromiseTyped(getCwd())
+  currentCwd.value = err || !cwd ? '.' : cwd
+  foldersOpen.value = true
+}
+
+function closeFolders() {
+  foldersOpen.value = false
+  terminal.value?.focus()
+}
+
+/** Navigates the shell to a folder selected from the folder panel. */
+async function openFolder(folder: string) {
+  closeFolders()
+  if (exited)
+    return
+
+  capture?.reset()
+  const quoted = `'${folder.replaceAll('\'', '\'\\\'\'')}'`
+  const [err] = await safePromiseTyped(Promise.all([writeTerminal(CLEAR_LINE), runCommand(`cd -- ${quoted}`)]))
+  if (err) {
+    console.error('changing directory failed:', err)
+  }
+}
 </script>
 
 <template>
@@ -141,6 +177,12 @@ async function clearHistory() {
       @run="runFromHistory"
       @clear="clearHistory"
       @close="closeHistory"
+    />
+    <FolderPanel
+      v-if="foldersOpen"
+      :root-path="currentCwd"
+      @select="openFolder"
+      @close="closeFolders"
     />
   </main>
 </template>

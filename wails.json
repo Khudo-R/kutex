@@ -10,5 +10,9 @@
   "author": {
     "name": "Khudo-R",
     "email": "mirkhud97@gmail.com"
+  },
+  "info": {
+    "productVersion": "0.0.1",
+    "comments": "0.0.1 pre-alpha"
   }
 }

@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import { computed, nextTick, onMounted, shallowRef, useTemplateRef, watch } from 'vue'
+import { kutexGlyphWhite } from '@/shared/assets/icons'
 
 const props = defineProps<{
   /** Recorded commands, most recent first. */
@@ -67,16 +68,19 @@ function onKeydown(e: KeyboardEvent) {
       role="dialog"
       aria-label="Command history"
     >
-      <input
-        ref="filterInput"
-        v-model="filter"
-        class="border-0 border-b border-[#3a4b63] border-b-solid bg-transparent px-3 py-2.5 text-inherit outline-none [font:inherit]"
-        type="text"
-        placeholder="Search command history…"
-        spellcheck="false"
-        autocomplete="off"
-        @keydown.prevent="onKeydown"
-      >
+      <div class="flex items-center gap-2.5 border-b border-[#3a4b63] border-b-solid px-3">
+        <img :src="kutexGlyphWhite" alt="Kutex" class="h-4 w-4 shrink-0 select-none opacity-85">
+        <input
+          ref="filterInput"
+          v-model="filter"
+          class="w-full border-0 bg-transparent py-2.5 text-inherit outline-none [font:inherit]"
+          type="text"
+          placeholder="Search command history…"
+          spellcheck="false"
+          autocomplete="off"
+          @keydown.prevent="onKeydown"
+        >
+      </div>
 
       <ul v-if="filtered.length" ref="list" class="m-0 flex-1 list-none overflow-y-auto px-0 py-1" role="listbox">
         <li

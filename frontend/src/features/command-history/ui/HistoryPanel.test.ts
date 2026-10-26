@@ -1,6 +1,7 @@
 import type { VueWrapper } from '@vue/test-utils'
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { kutexGlyphWhite } from '@/shared/assets/icons'
 import HistoryPanel from './HistoryPanel.vue'
 
 const COMMANDS = ['git status', 'npm run build', 'ls -la', 'Git Log --oneline', 'docker ps']
@@ -37,6 +38,7 @@ describe('historyPanel', () => {
 
       expect(wrapper.get('[role="dialog"]').attributes('aria-label')).toBe('Command history')
       expect(wrapper.find('[role="listbox"]').exists()).toBe(true)
+      expect(wrapper.get('img[alt="Kutex"]').attributes('src')).toBe(kutexGlyphWhite)
     })
 
     it('lists every command in the given order (most recent first)', () => {

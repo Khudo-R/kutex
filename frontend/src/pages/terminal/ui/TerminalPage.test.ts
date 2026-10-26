@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, ref } from 'vue'
 import { HistoryPanel } from '@/features/command-history'
+import { FolderPanel } from '@/features/folder-navigator'
 import TerminalPage from './TerminalPage.vue'
 
 const mocks = vi.hoisted(() => {
@@ -10,9 +11,12 @@ const mocks = vi.hoisted(() => {
   const writeTerminal = vi.fn<(...args: [string]) => Promise<void>>()
   const resizeTerminal = vi.fn<(...args: [number, number]) => Promise<void>>()
   const runCommand = vi.fn<(...args: [string]) => Promise<void>>()
+  const getCwd = vi.fn<() => Promise<string>>()
   const addHistory = vi.fn<(...args: [string]) => Promise<void>>()
   const getHistory = vi.fn<() => Promise<string[]>>()
   const clearHistory = vi.fn<() => Promise<void>>()
+  const getFolders = vi.fn<(...args: [string]) => Promise<string[]>>()
+  const getFoldersRecursive = vi.fn<(...args: [string]) => Promise<string[]>>()
 
   let outputListener: ((bytes: Uint8Array) => void) | undefined
   let exitListener: ((exitCode: number) => void) | undefined
@@ -45,9 +49,12 @@ const mocks = vi.hoisted(() => {
     writeTerminal,
     resizeTerminal,
     runCommand,
+    getCwd,
     addHistory,
     getHistory,
     clearHistory,
+    getFolders,
+    getFoldersRecursive,
     onTerminalOutput,
     onTerminalExit,
     getOutputListener: () => outputListener!,
@@ -65,6 +72,7 @@ vi.mock('@/entities/terminal', () => ({
   writeTerminal: mocks.writeTerminal,
   resizeTerminal: mocks.resizeTerminal,
   runCommand: mocks.runCommand,
+  getCwd: mocks.getCwd,
   onTerminalOutput: mocks.onTerminalOutput,
   onTerminalExit: mocks.onTerminalExit,
   XTerminal: { name: 'XTerminal' },
@@ -76,6 +84,11 @@ vi.mock('@/features/command-history', async importOriginal => ({
   getHistory: mocks.getHistory,
   clearHistory: mocks.clearHistory,
   CommandCapture: mocks.FakeCommandCapture,
+}))
+
+vi.mock('@/features/folder-navigator/api/system-api', () => ({
+  getFolders: mocks.getFolders,
+  getFoldersRecursive: mocks.getFoldersRecursive,
 }))
 
 interface FakeXTermInstance {
@@ -148,9 +161,12 @@ describe('terminalPage', () => {
     mocks.writeTerminal.mockResolvedValue(undefined)
     mocks.resizeTerminal.mockResolvedValue(undefined)
     mocks.runCommand.mockResolvedValue(undefined)
+    mocks.getCwd.mockResolvedValue('/home/vlad/projects/kutex')
     mocks.addHistory.mockResolvedValue(undefined)
     mocks.getHistory.mockResolvedValue(['git status', 'ls -la'])
     mocks.clearHistory.mockResolvedValue(undefined)
+    mocks.getFolders.mockResolvedValue(['src', 'internal'])
+    mocks.getFoldersRecursive.mockResolvedValue(['src', 'internal'])
 
     mocks.FakeCommandCapture.instances = []
     mocks.captureInput.mockReturnValue(undefined)
@@ -461,6 +477,100 @@ describe('terminalPage', () => {
 
       expect(errorSpy).toHaveBeenCalledWith('clearing history failed:', expect.any(Error))
       expect(wrapper!.findComponent(HistoryPanel).props('commands')).toEqual(['git status', 'ls -la'])
+      errorSpy.mockRestore()
+    })
+  })
+
+  describe('folder shortcut & FolderPanel workflow', () => {
+    it('intercepts Ctrl+Shift+F on keydown to resolve CWD and open FolderPanel', async () => {
+      mountPage()
+      emitReady()
+
+      const keydown = new KeyboardEvent('keydown', {
+        code: 'KeyF',
+        ctrlKey: true,
+        shiftKey: true,
+        cancelable: true,
+      })
+      const allowed = fakeXTerm.keyHandler!(keydown)
+      await flushPromises()
+
+      expect(allowed).toBe(false)
+      expect(keydown.defaultPrevented).toBe(true)
+      expect(mocks.getCwd).toHaveBeenCalledOnce()
+      const panel = wrapper!.findComponent(FolderPanel)
+      expect(panel.exists()).toBe(true)
+      expect(panel.props('rootPath')).toBe('/home/vlad/projects/kutex')
+    })
+
+    it('falls back to "." when getCwd rejects or returns an empty string', async () => {
+      mocks.getCwd.mockRejectedValueOnce(new Error('cwd error'))
+      mountPage()
+      emitReady()
+
+      fakeXTerm.keyHandler!(new KeyboardEvent('keydown', { code: 'KeyF', ctrlKey: true, shiftKey: true }))
+      await flushPromises()
+
+      expect(wrapper!.findComponent(FolderPanel).props('rootPath')).toBe('.')
+    })
+
+    it('closes the FolderPanel and refocuses the terminal on close event', async () => {
+      mountPage()
+      emitReady()
+      fakeXTerm.keyHandler!(new KeyboardEvent('keydown', { code: 'KeyF', ctrlKey: true, shiftKey: true }))
+      await flushPromises()
+
+      wrapper!.findComponent(FolderPanel).vm.$emit('close')
+      await flushPromises()
+
+      expect(wrapper!.findComponent(FolderPanel).exists()).toBe(false)
+      expect(termFocus).toHaveBeenCalledOnce()
+    })
+
+    it('clears the current prompt line and runs cd with escaped single quotes on select', async () => {
+      mountPage()
+      emitReady()
+      mocks.captureReset.mockClear()
+      fakeXTerm.keyHandler!(new KeyboardEvent('keydown', { code: 'KeyF', ctrlKey: true, shiftKey: true }))
+      await flushPromises()
+
+      wrapper!.findComponent(FolderPanel).vm.$emit('select', 'dir\'s name')
+      await flushPromises()
+
+      expect(wrapper!.findComponent(FolderPanel).exists()).toBe(false)
+      expect(termFocus).toHaveBeenCalledOnce()
+      expect(mocks.captureReset).toHaveBeenCalledOnce()
+      expect(mocks.writeTerminal).toHaveBeenCalledExactlyOnceWith('\x05\x15')
+      expect(mocks.runCommand).toHaveBeenCalledExactlyOnceWith('cd -- \'dir\'\\\'\'s name\'')
+    })
+
+    it('does not write or run cd if the shell exited while FolderPanel was open', async () => {
+      mountPage()
+      emitReady()
+      fakeXTerm.keyHandler!(new KeyboardEvent('keydown', { code: 'KeyF', ctrlKey: true, shiftKey: true }))
+      await flushPromises()
+      mocks.getExitListener()(0)
+
+      wrapper!.findComponent(FolderPanel).vm.$emit('select', 'src')
+      await flushPromises()
+
+      expect(wrapper!.findComponent(FolderPanel).exists()).toBe(false)
+      expect(mocks.writeTerminal).not.toHaveBeenCalled()
+      expect(mocks.runCommand).not.toHaveBeenCalled()
+    })
+
+    it('logs an error if changing directory from FolderPanel fails', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      mocks.runCommand.mockRejectedValueOnce(new Error('cd failed'))
+      mountPage()
+      emitReady()
+      fakeXTerm.keyHandler!(new KeyboardEvent('keydown', { code: 'KeyF', ctrlKey: true, shiftKey: true }))
+      await flushPromises()
+
+      wrapper!.findComponent(FolderPanel).vm.$emit('select', 'src')
+      await flushPromises()
+
+      expect(errorSpy).toHaveBeenCalledWith('changing directory failed:', expect.any(Error))
       errorSpy.mockRestore()
     })
   })
